@@ -202,9 +202,7 @@ data class BasicAuthInfo(
     val password: String,
 )
 
-/**
- * Checks if a [String] is a valid UUID
- */
+/* Checks if a [String] is a valid UUID */
 @OptIn(ExperimentalUuidApi::class)
 private fun String.toUuidOrNull() = try {
     Uuid.parse(this)
@@ -307,7 +305,9 @@ private class UncivServerRunner : CliktCommand() {
         echo("Starting UncivServer for ${file.absolutePath} on http://localhost$portStr")
         if (!file.exists()) file.mkdirs()
         val server = embeddedServer(Netty, port = serverPort) {
-            install(ContentNegotiation) { json() }
+            install(ContentNegotiation) {
+                json(Json { ignoreUnknownKeys = true })
+            }
 
             install(Authentication) {
                 basic {

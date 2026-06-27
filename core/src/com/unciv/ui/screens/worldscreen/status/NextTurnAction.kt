@@ -39,7 +39,10 @@ enum class NextTurnAction(protected val text: String, val color: Color) {
     },
     Waiting("Waiting for other players...",Color.GRAY) {
         override fun getText(worldScreen: WorldScreen) =
-            if (worldScreen.gameInfo.gameParameters.isOnlineMultiplayer)
+            if (worldScreen.gameInfo.gameParameters.isSimultaneousGame
+                && worldScreen.actionBroadcastManager != null)
+                worldScreen.actionBroadcastManager.getWaitingStatus()
+            else if (worldScreen.gameInfo.gameParameters.isOnlineMultiplayer)
                 "Waiting for [${worldScreen.gameInfo.currentPlayerCiv}]..."
             else text
         override fun isChoice(worldScreen: WorldScreen) =

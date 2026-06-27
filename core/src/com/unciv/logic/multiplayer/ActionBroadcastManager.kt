@@ -46,6 +46,19 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
         ChatStore.onActionResponse = { response ->
             onActionResponse(response)
         }
+        // Ensure WebSocket subscription for this game (handles reconnect/resume)
+        ChatStore.getChatByGameId(gameId)
+        ChatWebSocket.requestMessageSend(
+            com.unciv.logic.multiplayer.chat.Message.Join(listOf(gameId))
+        )
+    }
+
+    /** Returns "Waiting (finishedCount/totalCount)" for display in the NextTurnButton */
+    fun getWaitingStatus(): String {
+        val allHumans = worldScreen.gameInfo.civilizations
+            .filter { it.isAlive() && it.playerType == PlayerType.Human }
+        val finished = allHumans.count { it.civName in playersFinishedTurn }
+        return "Waiting ($finished/${allHumans.size})"
     }
 
     /** Cleanup on WorldScreen dispose */
