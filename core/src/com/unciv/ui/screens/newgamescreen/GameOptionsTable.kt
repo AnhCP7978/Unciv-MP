@@ -10,6 +10,7 @@ import com.unciv.Constants
 import com.unciv.UncivGame
 import com.unciv.logic.civilization.PlayerType
 import com.unciv.models.metadata.BaseRuleset
+import com.unciv.models.metadata.GameMode
 import com.unciv.models.metadata.GameParameters
 import com.unciv.models.metadata.Player
 import com.unciv.models.ruleset.Ruleset
@@ -112,6 +113,7 @@ class GameOptionsTable(
         checkboxTable.addIsOnlineMultiplayerCheckbox()
         if (gameParameters.isOnlineMultiplayer){
             checkboxTable.addAnyoneCanSpectateCheckbox()
+            checkboxTable.addSimultaneousModeCheckbox()
             selectBoxTable.addDurationSelectBox("Time until skip turn:", GameParameters::minutesUntilSkipTurn, 1, 0, 0)
             selectBoxTable.addDurationSelectBox("Total time to play:", GameParameters::minutesUntilForceResign, 3, 0, 0)
             selectBoxTable.addDurationSelectBox("Time recovered per turn:", GameParameters::minutesRecoveredPerTurn, 3, 0, 0)
@@ -196,10 +198,16 @@ class GameOptionsTable(
             }
 
     private fun Table.addAnyoneCanSpectateCheckbox() =
-            addCheckbox("Allow anyone to spectate", gameParameters.anyoneCanSpectate)
-            {
-                gameParameters.anyoneCanSpectate = it
-            }
+        addCheckbox("Allow anyone to spectate", gameParameters.anyoneCanSpectate)
+        {
+            gameParameters.anyoneCanSpectate = it
+        }
+
+    private fun Table.addSimultaneousModeCheckbox() =
+        addCheckbox("Simultaneous Mode", gameParameters.gameMode == GameMode.Simultaneous)
+        {
+            gameParameters.gameMode = if (it) GameMode.Simultaneous else GameMode.Sequential
+        }
 
     private fun Table.addEnableEspionageCheckbox() =
         addCheckbox("Enable Espionage", gameParameters.espionageEnabled)

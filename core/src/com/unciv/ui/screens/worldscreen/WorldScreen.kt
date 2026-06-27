@@ -193,7 +193,8 @@ class WorldScreen(
         addKeyboardPresses()  // shortcut keys like F1
 
 
-        if (gameInfo.gameParameters.isOnlineMultiplayer && !gameInfo.isUpToDate)
+        if (gameInfo.gameParameters.isOnlineMultiplayer && !gameInfo.isUpToDate
+            && !gameInfo.gameParameters.isSimultaneousGame)
             isPlayersTurn = false // until we're up to date, don't let the player do anything
 
         if (gameInfo.gameParameters.isOnlineMultiplayer) {

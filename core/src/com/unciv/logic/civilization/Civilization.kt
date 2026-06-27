@@ -398,7 +398,7 @@ class Civilization : IsPartOfGameInfoSerialization {
     }
 
     @Readonly fun isOneCityChallenger() = playerType == PlayerType.Human && gameInfo.gameParameters.oneCityChallenge
-    @Readonly fun isCurrentPlayer() = gameInfo.currentPlayerCiv == this
+    @Readonly fun isCurrentPlayer() = gameInfo.currentPlayerCiv == this || gameInfo.gameParameters.isSimultaneousGame
     @Readonly fun isMajorCiv() = nation.isMajorCiv
     @Readonly fun isMinorCiv() = nation.isCityState || nation.isBarbarian
     
