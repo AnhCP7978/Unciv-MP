@@ -21,4 +21,6 @@ data class CivTurnChoices(
     val freePolicies: Int = 0,
     /** accumulated culture towards next policy */
     val storedCulture: Int = 0,
+    /** hexCoord -> improvementName for tiles where this civ's workers are building improvements */
+    val tileImprovements: Map<String, String> = emptyMap(),
 )

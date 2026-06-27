@@ -52,6 +52,23 @@ sealed class GameAction {
     ) : GameAction()
 
     @Serializable
+    @SerialName("cityBombard")
+    data class CityBombardAction(
+        val cityId: String,
+        val targetTileX: Int,
+        val targetTileY: Int,
+        override val civName: String,
+    ) : GameAction()
+
+    @Serializable
+    @SerialName("greatPerson")
+    data class GreatPersonAction(
+        val unitId: Int,
+        val actionType: String,  // "HurryResearch", "HurryPolicy", "HurryWonder", "HurryBuilding", "ConstructImprovement", "ConductTradeMission"
+        override val civName: String,
+    ) : GameAction()
+
+    @Serializable
     @SerialName("endTurn")
     data class EndTurnAction(
         override val civName: String,

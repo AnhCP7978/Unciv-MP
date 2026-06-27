@@ -484,7 +484,9 @@ class WorldScreen(
 
     private fun displayTutorialsOnUpdate() {
 
-        displayTutorial(TutorialTrigger.Introduction)
+        if (!gameInfo.gameParameters.isSimultaneousGame) {
+            displayTutorial(TutorialTrigger.Introduction)
+        }
 
         displayTutorial(TutorialTrigger.EnemyCityNeedsConqueringWithMeleeUnit) {
             viewingCiv.diplomacy.values.asSequence()
@@ -778,7 +780,9 @@ class WorldScreen(
 
     private fun showTutorialsOnNextTurn() {
         if (!game.settings.showTutorials || autoPlay.isAutoPlaying()) return
-        displayTutorial(TutorialTrigger.SlowStart)
+        if (!gameInfo.gameParameters.isSimultaneousGame) {
+            displayTutorial(TutorialTrigger.SlowStart)
+        }
         displayTutorial(TutorialTrigger.CityExpansion) { viewingCiv.cities.any { it.expansion.tilesClaimed() > 0 } }
         displayTutorial(TutorialTrigger.BarbarianEncountered) { viewingCiv.viewableTiles.any { it.getUnits().any { unit -> unit.civ.isBarbarian } } }
         displayTutorial(TutorialTrigger.RoadsAndRailroads) { viewingCiv.cities.size > 2 }

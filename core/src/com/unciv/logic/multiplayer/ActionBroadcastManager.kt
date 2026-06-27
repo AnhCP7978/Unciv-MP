@@ -4,9 +4,14 @@ import com.badlogic.gdx.Gdx
 import com.unciv.UncivGame
 import com.unciv.logic.battle.Battle
 import com.unciv.logic.battle.BattleDamage
+import com.unciv.logic.battle.CityCombatant
+import com.unciv.logic.battle.ICombatant
+import com.unciv.logic.battle.AttackableTile
 import com.unciv.logic.battle.MapUnitCombatant
 import com.unciv.logic.battle.TargetHelper
 import com.unciv.logic.civilization.PlayerType
+import com.unciv.logic.map.mapunit.MapUnit
+import com.unciv.logic.map.tile.Tile
 import com.unciv.logic.multiplayer.chat.ChatWebSocket
 import com.unciv.logic.multiplayer.chat.ChatStore
 import com.unciv.logic.multiplayer.chat.Response
@@ -156,6 +161,36 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
         )
     }
 
+    @OptIn(ExperimentalUuidApi::class)
+    fun sendCityBombardAction(cityId: String, targetTileX: Int, targetTileY: Int, civName: String) {
+        val envelope = GameActionEnvelope(
+            gameId = gameId,
+            action = GameAction.CityBombardAction(
+                cityId = cityId, targetTileX = targetTileX, targetTileY = targetTileY, civName = civName,
+            ),
+            actionId = Uuid.random().toString(),
+            validated = isHost(),
+        )
+        ChatWebSocket.requestMessageSend(
+            com.unciv.logic.multiplayer.chat.Message.GameActionRelay(envelope)
+        )
+    }
+
+    @OptIn(ExperimentalUuidApi::class)
+    fun sendGreatPersonAction(unitId: Int, actionType: String, civName: String) {
+        val envelope = GameActionEnvelope(
+            gameId = gameId,
+            action = GameAction.GreatPersonAction(
+                unitId = unitId, actionType = actionType, civName = civName,
+            ),
+            actionId = Uuid.random().toString(),
+            validated = isHost(),
+        )
+        ChatWebSocket.requestMessageSend(
+            com.unciv.logic.multiplayer.chat.Message.GameActionRelay(envelope)
+        )
+    }
+
     /** Called when the local player clicks "End Turn" */
     fun sendEndTurn(civName: String) {
         if (hasEndedTurn) return  // prevent double-submit
@@ -175,6 +210,9 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
                     numberOfAdoptedPolicies = civ.policies.getNumberOfAdoptedPolicies(),
                     freePolicies = civ.policies.freePolicies,
                     storedCulture = civ.policies.storedCulture,
+                    tileImprovements = civ.gameInfo.tileMap.tileList
+                        .filter { it.improvementInProgress != null && it.getOwner() == civ }
+                        .associate { "${it.position.x},${it.position.y}" to it.improvementInProgress!! },
                 )
                 Json.encodeToString(choices)
             } catch (_: Exception) { null }
@@ -227,6 +265,24 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
                     action.unitId, action.targetTileX, action.targetTileY)
                 applyRemoteAttack(action)
             }
+            is GameAction.CityBombardAction -> {
+                if (!envelope.validated) {
+                    if (isHost()) hostValidateCityBombard(envelope)
+                    return
+                }
+                debug("Applying remote city bombard: city %s -> (%s, %s)",
+                    action.cityId, action.targetTileX, action.targetTileY)
+                applyRemoteCityBombard(action)
+            }
+            is GameAction.GreatPersonAction -> {
+                if (!envelope.validated) {
+                    if (isHost()) hostValidateGreatPerson(envelope)
+                    return
+                }
+                debug("Applying remote great person action: unit %s type %s",
+                    action.unitId, action.actionType)
+                executeGreatPersonAction(action)
+            }
             else -> {}
         }
     }
@@ -240,7 +296,13 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
             ?: originTile.getUnits().firstOrNull { it.id == action.unitId }
             ?: return
 
-        unit.movement.moveToTile(destTile)
+        try {
+            unit.movement.moveToTile(destTile)
+        } catch (_: Exception) {
+            // Remote move may fail if terrain/path differs between clients, that's OK
+            debug("applyRemoteMove: could not move unit %s to (%s,%s)",
+                action.unitId, action.to.x, action.to.y)
+        }
         Gdx.app.postRunnable {
             worldScreen.shouldUpdate = true
         }
@@ -417,6 +479,128 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
     }
 
     // ──────────────────────────────────────
+    //  City Bombard
+    // ──────────────────────────────────────
+
+    private fun applyRemoteCityBombard(action: GameAction.CityBombardAction) {
+        val tileMap = worldScreen.gameInfo.tileMap
+        val targetTile = tileMap[action.targetTileX, action.targetTileY]
+        val city = worldScreen.gameInfo.civilizations.asSequence()
+            .flatMap { it.cities.asSequence() }
+            .firstOrNull { it.id == action.cityId } ?: return
+        if (!city.canBombard()) return  // already bombarded (idempotency)
+
+        val attacker = CityCombatant(city)
+        val attackableTile = AttackableTile(attacker.getTile(), targetTile, 0f,
+            getMapCombatantOfTile(targetTile))
+        if (!Battle.movePreparingAttack(attacker, attackableTile)) return
+        val defender = attackableTile.combatant
+        val (damageToDefender, damageToAttacker) = Battle.attackOrNuke(attacker, attackableTile)
+        if (defender != null) {
+            worldScreen.battleAnimationDeferred(attacker, damageToAttacker, defender, damageToDefender)
+        }
+        Gdx.app.postRunnable { worldScreen.shouldUpdate = true }
+    }
+
+    private fun hostValidateCityBombard(envelope: GameActionEnvelope) {
+        val action = envelope.action as? GameAction.CityBombardAction ?: return
+        val tileMap = worldScreen.gameInfo.tileMap
+        val targetTile = tileMap[action.targetTileX, action.targetTileY]
+        val city = worldScreen.gameInfo.civilizations.asSequence()
+            .flatMap { it.cities.asSequence() }
+            .firstOrNull { it.id == action.cityId } ?: return
+        if (!city.canBombard()) return
+
+        val attacker = CityCombatant(city)
+        val attackableTile = AttackableTile(attacker.getTile(), targetTile, 0f,
+            getMapCombatantOfTile(targetTile))
+        if (!Battle.movePreparingAttack(attacker, attackableTile)) return
+        Battle.attackOrNuke(attacker, attackableTile)
+        // Echo validated
+        val validatedEnvelope = envelope.copy(validated = true)
+        ChatWebSocket.requestMessageSend(
+            com.unciv.logic.multiplayer.chat.Message.GameActionRelay(validatedEnvelope)
+        )
+        Gdx.app.postRunnable { worldScreen.shouldUpdate = true }
+    }
+
+    // ──────────────────────────────────────
+    //  Great Person
+    // ──────────────────────────────────────
+
+    /** Execute a great person action locally (used by both validate and apply) */
+    private fun executeGreatPersonAction(action: GameAction.GreatPersonAction): Boolean {
+        val tileMap = worldScreen.gameInfo.tileMap
+        val unit = tileMap.values.asSequence()
+            .flatMap { it.getUnits().asSequence() }
+            .firstOrNull { it.id == action.unitId && it.civ.civName == action.civName } ?: return false
+        if (!unit.hasMovement() || unit.isDestroyed) return false
+
+        when (action.actionType) {
+            "HurryResearch" -> hurryResearchEffect(unit)
+            "HurryPolicy" -> hurryPolicyEffect(unit)
+            "HurryWonder", "HurryBuilding" -> hurryWonderOrBuildingEffect(unit)
+            "ConductTradeMission" -> tradeMissionEffect(unit)
+            else -> return false
+        }
+        unit.consume()
+        Gdx.app.postRunnable { worldScreen.shouldUpdate = true }
+        return true
+    }
+
+    /** Host validates a great person action by executing on authoritative state */
+    private fun hostValidateGreatPerson(envelope: GameActionEnvelope) {
+        val action = envelope.action as? GameAction.GreatPersonAction ?: return
+        if (!executeGreatPersonAction(action)) return
+        // Echo validated
+        val validatedEnvelope = envelope.copy(validated = true)
+        ChatWebSocket.requestMessageSend(
+            com.unciv.logic.multiplayer.chat.Message.GameActionRelay(validatedEnvelope)
+        )
+    }
+
+    private fun hurryResearchEffect(unit: MapUnit) {
+        val civ = unit.civ
+        civ.tech.addScience(civ.tech.getScienceFromGreatScientist())
+    }
+
+    private fun hurryPolicyEffect(unit: MapUnit) {
+        unit.civ.policies.addCulture(unit.civ.policies.getCultureFromGreatWriter())
+    }
+
+    private fun hurryWonderOrBuildingEffect(unit: MapUnit) {
+        val tile = unit.currentTile
+        if (!tile.isCityCenter()) return
+        val city = tile.getCity() ?: return
+        val production = ((300 + 30 * city.population.population) * unit.civ.gameInfo.speed.productionCostModifier).toInt()
+        city.cityConstructions.addProductionPoints(production)
+        city.cityConstructions.constructIfEnough()
+    }
+
+    private fun tradeMissionEffect(unit: MapUnit) {
+        val tile = unit.currentTile
+        val targetCiv = tile.owningCity?.civ ?: return
+        if (!targetCiv.isCityState) return
+        var goldEarned = (350 + 50 * unit.civ.getEraNumber()) * unit.civ.gameInfo.speed.goldCostModifier
+        var influenceEarned = 0f
+        for (goldUnique in unit.getMatchingUniques(
+            com.unciv.models.ruleset.unique.UniqueType.PercentGoldFromTradeMissions,
+            checkCivInfoUniques = true)) {
+            goldEarned *= (1 + goldUnique.params[0].toFloat() / 100)
+            influenceEarned = goldUnique.params[0].toFloat()
+        }
+        unit.civ.addGold(goldEarned.toInt())
+        targetCiv.getDiplomacyManager(unit.civ)?.addInfluence(influenceEarned)
+    }
+
+    /** Get the [ICombatant] on a tile for city bombardment target resolution */
+    private fun getMapCombatantOfTile(tile: Tile): ICombatant {
+        return (tile.getUnits().firstOrNull()?.let { MapUnitCombatant(it) }
+            ?: tile.getCity()?.let { CityCombatant(it) }
+            ?: CityCombatant(tile.getCity()!!))
+    }
+
+    // ──────────────────────────────────────
     //  Host-only: end-turn tracking
     // ──────────────────────────────────────
 
@@ -483,6 +667,21 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
                             free = choices.freePolicies,
                             culture = choices.storedCulture,
                         )
+                    }
+                    // Apply tile improvements (worker builds) from non-host
+                    for ((coordStr, improvement) in choices.tileImprovements) {
+                        val parts = coordStr.split(',')
+                        if (parts.size != 2) continue
+                        val x = parts[0].toIntOrNull() ?: continue
+                        val y = parts[1].toIntOrNull() ?: continue
+                        val tile = gameClone.tileMap.tileList.firstOrNull {
+                            it.position.x == x && it.position.y == y
+                        } ?: continue
+                        // Only queue if not already queued or completed
+                        if (tile.improvementInProgress != improvement) {
+                            val turns = tile.ruleset.tileImprovements[improvement]?.turnsToBuild ?: 1
+                            tile.queueImprovement(improvement, turns)
+                        }
                     }
                 } catch (e: Exception) {
                     debug("Failed to apply choices for %s: %s", civName, e.message)

@@ -27,6 +27,11 @@ object SimultaneousTurnProcessor {
         val isSimultaneous = gameInfo.gameParameters.isSimultaneousGame
         if (!isSimultaneous) return  // safety guard, should never be called in sequential
 
+        // Clear stale popup alerts for all alive players to prevent duplicate popups across turns
+        for (civ in gameInfo.civilizations.filter { it.isAlive() }) {
+            civ.popupAlerts.clear()
+        }
+
         // 1. End turn for all alive human players
         for (civ in gameInfo.civilizations.filter { it.isAlive() && it.playerType == PlayerType.Human }) {
             TurnManager(civ).endTurn()

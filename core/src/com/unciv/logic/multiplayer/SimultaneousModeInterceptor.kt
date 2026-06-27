@@ -76,8 +76,40 @@ object SimultaneousModeInterceptor {
                 )
                 return {} // block local execution for ALL players — wait for host echo
             }
+            UnitActionType.HurryResearch,
+            UnitActionType.HurryPolicy,
+            UnitActionType.HurryWonder,
+            UnitActionType.HurryBuilding,
+            UnitActionType.ConductTradeMission -> {
+                broadcastManager.sendGreatPersonAction(
+                    unit.id, action.type.name, unit.civ.civName
+                )
+                return {}
+            }
             else -> return null  // don't intercept other actions
         }
+    }
+
+    /**
+     * Intercept a city bombardment action. Both host and non-host block local execution.
+     */
+    fun interceptCityBombard(
+        worldScreen: WorldScreen,
+        cityId: String,
+        targetTile: Tile,
+        civName: String,
+    ): Boolean {
+        val gameInfo = worldScreen.gameInfo
+        if (!gameInfo.gameParameters.isSimultaneousGame) return false
+        val broadcastManager = worldScreen.actionBroadcastManager ?: return false
+
+        broadcastManager.sendCityBombardAction(
+            cityId = cityId,
+            targetTileX = targetTile.position.x,
+            targetTileY = targetTile.position.y,
+            civName = civName,
+        )
+        return true  // block local execution
     }
 
     /**

@@ -344,6 +344,9 @@ class BattleTable(val worldScreen: WorldScreen) : Table() {
             SoundPlayer.play(attacker.getAttackSound())
 
         if (attacker is MapUnitCombatant && SimultaneousModeInterceptor.interceptAttack(worldScreen, attacker.unit, attackableTile.tileToAttack)) return
+        if (attacker is CityCombatant && SimultaneousModeInterceptor.interceptCityBombard(
+                worldScreen, attacker.city.id, attackableTile.tileToAttack, attacker.city.civ.civName
+            )) return
 
         val (damageToDefender, damageToAttacker) = Battle.attackOrNuke(attacker, attackableTile)
 
