@@ -30,6 +30,7 @@ import com.unciv.ui.components.extensions.toTextButton
 import com.unciv.ui.components.input.KeyboardBinding
 import com.unciv.ui.components.input.keyShortcuts
 import com.unciv.ui.components.input.onActivation
+import com.unciv.logic.multiplayer.SimultaneousModeInterceptor
 import com.unciv.ui.images.ImageGetter
 import com.unciv.ui.popups.Popup
 import com.unciv.ui.screens.diplomacyscreen.LeaderIntroTable
@@ -181,7 +182,9 @@ class AlertPopup(
             addCloseButton("THIS MEANS WAR!", KeyboardBinding.Confirm) {
             player.getDiplomacyManager(bullyOrAttacker)!!.sideWithCityState()
             val warReason = if (popupAlert.type == AlertType.AttackedAllyMinor) WarType.AlliedCityStateWar else WarType.ProtectedCityStateWar
-            player.getDiplomacyManager(bullyOrAttacker)!!.declareWar(DeclareWarReason(warReason, cityState))
+            if (!SimultaneousModeInterceptor.interceptDeclareWar(worldScreen, player.civName, bullyOrAttacker.civName)) {
+                player.getDiplomacyManager(bullyOrAttacker)!!.declareWar(DeclareWarReason(warReason, cityState))
+            }
             cityState.getDiplomacyManager(player)!!.influence += 20f // You went to war for us!!
         }.row()}
 
@@ -290,7 +293,9 @@ class AlertPopup(
         val diplomacy = viewingCiv.getDiplomacyManager(denouncer)!!
         if (diplomacy.canDeclareWar()) {
             addCloseButton("THIS MEANS WAR! (Declare war)") {
-                diplomacy.declareWar()
+                if (!SimultaneousModeInterceptor.interceptDeclareWar(worldScreen, viewingCiv.civName, denouncer.civName)) {
+                    diplomacy.declareWar()
+                }
             }.row()
         }
         addCloseButton("Very well.", KeyboardBinding.Cancel).row()
@@ -318,7 +323,8 @@ class AlertPopup(
         }.row()
         addCloseButton(demand.refuseDemandText, KeyboardBinding.Cancel) {
             playerDiploManager.refuseDemand(demand)
-            if (demand == Demand.DoNotAttackUs)
+            if (demand == Demand.DoNotAttackUs
+                && !SimultaneousModeInterceptor.interceptDeclareWar(worldScreen, viewingCiv.civName, otherciv.civName))
                 viewingCiv.getDiplomacyManager(otherciv)!!.declareWar()
         }
         return true

@@ -88,7 +88,8 @@ sealed class Message {
     @Serializable
     @SerialName("endTurn")
     data class EndTurn(
-        val gameId: String, val civName: String
+        val gameId: String, val civName: String,
+        val choicesJson: String? = null,
     ) : Message()
 
     @Serializable
@@ -134,7 +135,9 @@ sealed class Response {
     @Serializable
     @SerialName("playerEndedTurn")
     data class PlayerEndedTurn(
-        val gameId: String, val civName: String, val finishedPlayers: List<String> = emptyList()
+        val gameId: String, val civName: String,
+        val finishedPlayers: List<String> = emptyList(),
+        val choicesJson: String? = null,
     ) : Response()
 
     @Serializable
@@ -506,6 +509,7 @@ private class UncivServerRunner : CliktCommand() {
                                         wsSessionManager.publish(gameId, Response.PlayerEndedTurn(
                                             gameId = message.gameId,
                                             civName = message.civName,
+                                            choicesJson = message.choicesJson,
                                         ))
                                     }
 

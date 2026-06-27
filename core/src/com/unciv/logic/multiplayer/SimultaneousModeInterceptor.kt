@@ -70,14 +70,29 @@ object SimultaneousModeInterceptor {
         when (action.type) {
             UnitActionType.FoundCity -> {
                 val tile = unit.getTile()
-                if (broadcastManager.isHost()) {
-                    broadcastManager.sendFoundCityAction(unit.id, tile.position.x, tile.position.y, unit.civ.civName)
-                    return null // let host execute locally too
-                }
-                broadcastManager.sendFoundCityAction(unit.id, tile.position.x, tile.position.y, unit.civ.civName)
-                return {} // no-op, blocks original
+                // Host sends validated=true (no validation needed), non-host sends validated=false
+                broadcastManager.sendFoundCityAction(
+                    unit.id, tile.position.x, tile.position.y, unit.civ.civName
+                )
+                return {} // block local execution for ALL players — wait for host echo
             }
             else -> return null  // don't intercept other actions
         }
+    }
+
+    /**
+     * Intercept a declare war action. Returns true if the action was intercepted.
+     */
+    fun interceptDeclareWar(
+        worldScreen: WorldScreen,
+        civName: String,
+        otherCivName: String,
+    ): Boolean {
+        val gameInfo = worldScreen.gameInfo
+        if (!gameInfo.gameParameters.isSimultaneousGame) return false
+        val broadcastManager = worldScreen.actionBroadcastManager ?: return false
+
+        broadcastManager.sendDeclareWarAction(civName, otherCivName)
+        return true
     }
 }

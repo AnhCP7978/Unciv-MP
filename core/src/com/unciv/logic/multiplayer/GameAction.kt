@@ -36,6 +36,13 @@ sealed class GameAction {
     ) : GameAction()
 
     @Serializable
+    @SerialName("declareWar")
+    data class DeclareWarAction(
+        val otherCivName: String,
+        override val civName: String,
+    ) : GameAction()
+
+    @Serializable
     @SerialName("endTurn")
     data class EndTurnAction(
         override val civName: String,
