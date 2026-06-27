@@ -13,4 +13,12 @@ data class CivTurnChoices(
     val cityConstructions: Map<String, String?>,
     /** current tech being researched, null means none */
     val currentTechResearch: String?,
+    /** full set of adopted policy names */
+    val adoptedPolicies: List<String> = emptyList(),
+    /** how many policies were paid for with culture */
+    val numberOfAdoptedPolicies: Int = 0,
+    /** unspent free policies */
+    val freePolicies: Int = 0,
+    /** accumulated culture towards next policy */
+    val storedCulture: Int = 0,
 )

@@ -2,6 +2,10 @@ package com.unciv.logic.multiplayer
 
 import com.badlogic.gdx.Gdx
 import com.unciv.UncivGame
+import com.unciv.logic.battle.Battle
+import com.unciv.logic.battle.BattleDamage
+import com.unciv.logic.battle.MapUnitCombatant
+import com.unciv.logic.battle.TargetHelper
 import com.unciv.logic.civilization.PlayerType
 import com.unciv.logic.multiplayer.chat.ChatWebSocket
 import com.unciv.logic.multiplayer.chat.ChatStore
@@ -9,6 +13,7 @@ import com.unciv.logic.multiplayer.chat.Response
 import com.unciv.ui.screens.worldscreen.WorldScreen
 import com.unciv.utils.Concurrency
 import com.unciv.utils.debug
+import com.unciv.ui.screens.worldscreen.bottombar.BattleTableHelpers.battleAnimationDeferred
 import kotlinx.serialization.json.Json
 import kotlin.uuid.ExperimentalUuidApi
 import kotlin.uuid.Uuid
@@ -123,6 +128,21 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
         )
     }
 
+    @OptIn(ExperimentalUuidApi::class)
+    fun sendAttackAction(unitId: Int, targetTileX: Int, targetTileY: Int, civName: String) {
+        val envelope = GameActionEnvelope(
+            gameId = gameId,
+            action = GameAction.AttackAction(
+                unitId = unitId, targetTileX = targetTileX, targetTileY = targetTileY, civName = civName,
+            ),
+            actionId = Uuid.random().toString(),
+            validated = isHost(),
+        )
+        ChatWebSocket.requestMessageSend(
+            com.unciv.logic.multiplayer.chat.Message.GameActionRelay(envelope)
+        )
+    }
+
     /** Called when the local player clicks "End Turn" */
     fun sendEndTurn(civName: String) {
         if (hasEndedTurn) return  // prevent double-submit
@@ -134,7 +154,15 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
                 val civ = worldScreen.gameInfo.civilizations.first { it.civName == civName }
                 val cityConstructions = civ.cities.associate { it.id to it.cityConstructions.currentConstructionName() }
                 val techResearch = civ.tech.techsToResearch.firstOrNull()
-                val choices = CivTurnChoices(civName, cityConstructions, techResearch)
+                val choices = CivTurnChoices(
+                    civName = civName,
+                    cityConstructions = cityConstructions,
+                    currentTechResearch = techResearch,
+                    adoptedPolicies = civ.policies.getAdoptedPolicies().toList(),
+                    numberOfAdoptedPolicies = civ.policies.getNumberOfAdoptedPolicies(),
+                    freePolicies = civ.policies.freePolicies,
+                    storedCulture = civ.policies.storedCulture,
+                )
                 Json.encodeToString(choices)
             } catch (_: Exception) { null }
         } else null
@@ -176,6 +204,15 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
                 debug("Applying remote declare war: %s vs %s",
                     action.civName, action.otherCivName)
                 applyRemoteDeclareWar(action)
+            }
+            is GameAction.AttackAction -> {
+                if (!envelope.validated) {
+                    if (isHost()) hostValidateAttack(envelope)
+                    return
+                }
+                debug("Applying remote attack: unit %s -> (%s, %s)",
+                    action.unitId, action.targetTileX, action.targetTileY)
+                applyRemoteAttack(action)
             }
             else -> {}
         }
@@ -306,6 +343,67 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
     }
 
     // ──────────────────────────────────────
+    //  Attack
+    // ──────────────────────────────────────
+
+    private fun applyRemoteAttack(action: GameAction.AttackAction) {
+        val tileMap = worldScreen.gameInfo.tileMap
+        val targetTile = tileMap[action.targetTileX, action.targetTileY]
+        val unit = targetTile.getUnits().firstOrNull { it.id == action.unitId }
+            // Unit might have moved from another tile
+            ?: tileMap.values.asSequence().flatMap { it.getUnits().asSequence() }
+                .firstOrNull { it.id == action.unitId && it.civ.civName == action.civName }
+            ?: return
+        if (!unit.canAttack()) return  // already attacked (idempotency for host echo)
+
+        val attackableTile = TargetHelper
+            .getAttackableEnemies(unit, unit.movement.getDistanceToTiles())
+            .firstOrNull { it.tileToAttack == targetTile } ?: return
+        val attacker = MapUnitCombatant(unit)
+        if (!Battle.movePreparingAttack(attacker, attackableTile)) return
+        val defender = attackableTile.combatant
+        val (damageToDefender, damageToAttacker) = Battle.attackOrNuke(attacker, attackableTile)
+        if (defender != null) {
+            worldScreen.battleAnimationDeferred(attacker, damageToAttacker, defender, damageToDefender)
+        }
+        Gdx.app.postRunnable {
+            worldScreen.shouldUpdate = true
+        }
+    }
+
+    private fun hostValidateAttack(envelope: GameActionEnvelope) {
+        val action = envelope.action as? GameAction.AttackAction ?: return
+        val tileMap = worldScreen.gameInfo.tileMap
+        val targetTile = tileMap[action.targetTileX, action.targetTileY]
+        val unit = targetTile.getUnits().firstOrNull { it.id == action.unitId && it.civ.civName == action.civName }
+            ?: tileMap.values.asSequence().flatMap { it.getUnits().asSequence() }
+                .firstOrNull { it.id == action.unitId && it.civ.civName == action.civName }
+        if (unit == null || !unit.canAttack()) {
+            debug("Host rejected attack: unit %s invalid or cannot attack", action.unitId)
+            return
+        }
+        val attackableTile = TargetHelper
+            .getAttackableEnemies(unit, unit.movement.getDistanceToTiles())
+            .firstOrNull { it.tileToAttack == targetTile }
+        if (attackableTile == null) {
+            debug("Host rejected attack: no valid target at (%s, %s)", action.targetTileX, action.targetTileY)
+            return
+        }
+        // Apply battle on authoritative state
+        val attacker = MapUnitCombatant(unit)
+        if (!Battle.movePreparingAttack(attacker, attackableTile)) return
+        Battle.attackOrNuke(attacker, attackableTile)
+        // Echo validated
+        val validatedEnvelope = envelope.copy(validated = true)
+        ChatWebSocket.requestMessageSend(
+            com.unciv.logic.multiplayer.chat.Message.GameActionRelay(validatedEnvelope)
+        )
+        Gdx.app.postRunnable {
+            worldScreen.shouldUpdate = true
+        }
+    }
+
+    // ──────────────────────────────────────
     //  Host-only: end-turn tracking
     // ──────────────────────────────────────
 
@@ -363,6 +461,15 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
                     if (choices.currentTechResearch != null) {
                         civ.tech.techsToResearch.clear()
                         civ.tech.techsToResearch.add(choices.currentTechResearch)
+                    }
+                    // Apply policies
+                    if (choices.adoptedPolicies.isNotEmpty()) {
+                        civ.policies.applyChoices(
+                            policies = choices.adoptedPolicies,
+                            numberOfAdopted = choices.numberOfAdoptedPolicies,
+                            free = choices.freePolicies,
+                            culture = choices.storedCulture,
+                        )
                     }
                 } catch (e: Exception) {
                     debug("Failed to apply choices for %s: %s", civName, e.message)

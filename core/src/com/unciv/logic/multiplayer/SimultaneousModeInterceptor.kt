@@ -95,4 +95,27 @@ object SimultaneousModeInterceptor {
         broadcastManager.sendDeclareWarAction(civName, otherCivName)
         return true
     }
+
+    /**
+     * Intercept an attack action. Both host and non-host block local execution.
+     * The host executes the battle on its authoritative state and echoes validated=true,
+     * then all clients apply it.
+     */
+    fun interceptAttack(
+        worldScreen: WorldScreen,
+        unit: com.unciv.logic.map.mapunit.MapUnit,
+        targetTile: com.unciv.logic.map.tile.Tile,
+    ): Boolean {
+        val gameInfo = worldScreen.gameInfo
+        if (!gameInfo.gameParameters.isSimultaneousGame) return false
+        val broadcastManager = worldScreen.actionBroadcastManager ?: return false
+
+        broadcastManager.sendAttackAction(
+            unitId = unit.id,
+            targetTileX = targetTile.position.x,
+            targetTileY = targetTile.position.y,
+            civName = unit.civ.civName,
+        )
+        return true  // block local execution for ALL players, including host
+    }
 }

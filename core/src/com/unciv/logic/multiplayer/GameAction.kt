@@ -27,6 +27,15 @@ sealed class GameAction {
     ) : GameAction()
 
     @Serializable
+    @SerialName("attack")
+    data class AttackAction(
+        val unitId: Int,
+        val targetTileX: Int,
+        val targetTileY: Int,
+        override val civName: String,
+    ) : GameAction()
+
+    @Serializable
     @SerialName("foundCity")
     data class FoundCityAction(
         val unitId: Int,
