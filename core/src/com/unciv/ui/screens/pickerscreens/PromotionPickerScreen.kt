@@ -118,8 +118,17 @@ class PromotionPickerScreen private constructor(
         val path = tree.getPathTo(button.node.promotion)
         SoundPlayer.playRepeated(UncivSound.Promote, path.size.coerceAtMost(2))
 
-        for (promotion in path)
-            unit.promotions.addPromotion(promotion.name)
+        val promotionNames = path.map { it.name }
+        for (promotionName in promotionNames)
+            unit.promotions.addPromotion(promotionName)
+
+        // Broadcast promotion in simultaneous multiplayer
+        if (unit.civ.gameInfo.gameParameters.isSimultaneousGame) {
+            for (promotionName in promotionNames) {
+                com.unciv.UncivGame.Current.worldScreen?.actionBroadcastManager
+                    ?.sendPromoteAction(unit.id, promotionName, unit.civ.civName)
+            }
+        }
 
         onChange?.invoke()
 

@@ -191,6 +191,36 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
         )
     }
 
+    @OptIn(ExperimentalUuidApi::class)
+    fun sendUpgradeAction(unitId: Int, upgradeToUnitName: String, civName: String) {
+        val envelope = GameActionEnvelope(
+            gameId = gameId,
+            action = GameAction.UpgradeAction(
+                unitId = unitId, upgradeToUnitName = upgradeToUnitName, civName = civName,
+            ),
+            actionId = Uuid.random().toString(),
+            validated = isHost(),
+        )
+        ChatWebSocket.requestMessageSend(
+            com.unciv.logic.multiplayer.chat.Message.GameActionRelay(envelope)
+        )
+    }
+
+    @OptIn(ExperimentalUuidApi::class)
+    fun sendPromoteAction(unitId: Int, promotionName: String, civName: String) {
+        val envelope = GameActionEnvelope(
+            gameId = gameId,
+            action = GameAction.PromoteAction(
+                unitId = unitId, promotionName = promotionName, civName = civName,
+            ),
+            actionId = Uuid.random().toString(),
+            validated = isHost(),
+        )
+        ChatWebSocket.requestMessageSend(
+            com.unciv.logic.multiplayer.chat.Message.GameActionRelay(envelope)
+        )
+    }
+
     /** Called when the local player clicks "End Turn" */
     fun sendEndTurn(civName: String) {
         if (hasEndedTurn) return  // prevent double-submit
@@ -282,6 +312,24 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
                 debug("Applying remote great person action: unit %s type %s",
                     action.unitId, action.actionType)
                 executeGreatPersonAction(action)
+            }
+            is GameAction.UpgradeAction -> {
+                if (!envelope.validated) {
+                    if (isHost()) hostValidateUpgrade(envelope)
+                    return
+                }
+                debug("Applying remote upgrade: unit %s -> %s",
+                    action.unitId, action.upgradeToUnitName)
+                applyRemoteUpgrade(action)
+            }
+            is GameAction.PromoteAction -> {
+                if (!envelope.validated) {
+                    if (isHost()) hostValidatePromote(envelope)
+                    return
+                }
+                debug("Applying remote promote: unit %s <- %s",
+                    action.unitId, action.promotionName)
+                applyRemotePromote(action)
             }
             else -> {}
         }
@@ -594,10 +642,78 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
     }
 
     /** Get the [ICombatant] on a tile for city bombardment target resolution */
-    private fun getMapCombatantOfTile(tile: Tile): ICombatant {
+    private fun getMapCombatantOfTile(tile: Tile): ICombatant? {
         return (tile.getUnits().firstOrNull()?.let { MapUnitCombatant(it) }
-            ?: tile.getCity()?.let { CityCombatant(it) }
-            ?: CityCombatant(tile.getCity()!!))
+            ?: tile.getCity()?.let { CityCombatant(it) })
+    }
+
+    // ──────────────────────────────────────
+    //  Upgrade
+    // ──────────────────────────────────────
+
+    /** Perform a unit upgrade locally (shared by host-validate and remote-apply) */
+    private fun performUpgradeAction(action: GameAction.UpgradeAction): Boolean {
+        // Search all tiles for the unit by id
+        val tileMap = worldScreen.gameInfo.tileMap
+        val unit = tileMap.tileList.asSequence()
+            .flatMap { it.getUnits().asSequence() }
+            .firstOrNull { it.id == action.unitId && it.civ.civName == action.civName } ?: return false
+        if (unit.isDestroyed || !unit.hasMovement()) return false
+        val upgradedUnit = unit.civ.getEquivalentUnit(action.upgradeToUnitName)
+        if (!unit.upgrade.canUpgrade(unitToUpgradeTo = upgradedUnit)) return false
+        if (unit.civ.gold < unit.upgrade.getCostOfUpgrade(upgradedUnit)) return false
+        unit.upgrade.performUpgrade(upgradedUnit, isFree = false)
+        return true
+    }
+
+    /** Host validates the upgrade on authoritative state, then echoes validated envelope */
+    private fun hostValidateUpgrade(envelope: GameActionEnvelope) {
+        val action = envelope.action as? GameAction.UpgradeAction ?: return
+        if (!performUpgradeAction(action)) return
+        val validatedEnvelope = envelope.copy(validated = true)
+        ChatWebSocket.requestMessageSend(
+            com.unciv.logic.multiplayer.chat.Message.GameActionRelay(validatedEnvelope)
+        )
+        Gdx.app.postRunnable { worldScreen.shouldUpdate = true }
+    }
+
+    /** Remote client applies an already-validated upgrade */
+    private fun applyRemoteUpgrade(action: GameAction.UpgradeAction) {
+        performUpgradeAction(action)
+        Gdx.app.postRunnable { worldScreen.shouldUpdate = true }
+    }
+
+    // ──────────────────────────────────────
+    //  Promote
+    // ──────────────────────────────────────
+
+    /** Perform a unit promotion locally (shared by host-validate and remote-apply) */
+    private fun performPromoteAction(action: GameAction.PromoteAction): Boolean {
+        val tileMap = worldScreen.gameInfo.tileMap
+        val unit = tileMap.tileList.asSequence()
+            .flatMap { it.getUnits().asSequence() }
+            .firstOrNull { it.id == action.unitId && it.civ.civName == action.civName } ?: return false
+        if (unit.isDestroyed) return false
+        if (unit.promotions.getAvailablePromotions().none { it.name == action.promotionName }) return false
+        unit.promotions.addPromotion(action.promotionName)
+        return true
+    }
+
+    /** Host validates the promotion on authoritative state, then echoes validated envelope */
+    private fun hostValidatePromote(envelope: GameActionEnvelope) {
+        val action = envelope.action as? GameAction.PromoteAction ?: return
+        if (!performPromoteAction(action)) return
+        val validatedEnvelope = envelope.copy(validated = true)
+        ChatWebSocket.requestMessageSend(
+            com.unciv.logic.multiplayer.chat.Message.GameActionRelay(validatedEnvelope)
+        )
+        Gdx.app.postRunnable { worldScreen.shouldUpdate = true }
+    }
+
+    /** Remote client applies an already-validated promotion */
+    private fun applyRemotePromote(action: GameAction.PromoteAction) {
+        performPromoteAction(action)
+        Gdx.app.postRunnable { worldScreen.shouldUpdate = true }
     }
 
     // ──────────────────────────────────────

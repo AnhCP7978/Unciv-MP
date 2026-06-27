@@ -4,6 +4,7 @@ import com.unciv.logic.map.mapunit.MapUnit
 import com.unciv.logic.map.tile.Tile
 import com.unciv.models.UnitAction
 import com.unciv.models.UnitActionType
+import com.unciv.models.UpgradeUnitAction
 import com.unciv.ui.screens.worldscreen.WorldScreen
 
 /**
@@ -85,6 +86,13 @@ object SimultaneousModeInterceptor {
                     unit.id, action.type.name, unit.civ.civName
                 )
                 return {}
+            }
+            UnitActionType.Upgrade -> {
+                val upgradeAction = action as? UpgradeUnitAction ?: return null
+                broadcastManager.sendUpgradeAction(
+                    unit.id, upgradeAction.unitToUpgradeTo.name, unit.civ.civName
+                )
+                return {} // block local execution — wait for host echo
             }
             else -> return null  // don't intercept other actions
         }

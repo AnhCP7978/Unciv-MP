@@ -69,6 +69,22 @@ sealed class GameAction {
     ) : GameAction()
 
     @Serializable
+    @SerialName("upgrade")
+    data class UpgradeAction(
+        val unitId: Int,
+        val upgradeToUnitName: String,
+        override val civName: String,
+    ) : GameAction()
+
+    @Serializable
+    @SerialName("promote")
+    data class PromoteAction(
+        val unitId: Int,
+        val promotionName: String,
+        override val civName: String,
+    ) : GameAction()
+
+    @Serializable
     @SerialName("endTurn")
     data class EndTurnAction(
         override val civName: String,
