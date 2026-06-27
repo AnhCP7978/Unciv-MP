@@ -1,6 +1,9 @@
+// NOTE: The Message and Response sealed classes below must be kept in sync with the server's copies in UncivServer.kt
+
 package com.unciv.logic.multiplayer.chat
 
 import com.unciv.UncivGame
+import com.unciv.logic.multiplayer.GameActionEnvelope
 import com.unciv.logic.multiplayer.chat.ChatWebSocket.job
 import com.unciv.logic.multiplayer.chat.ChatWebSocket.start
 import com.unciv.utils.Concurrency
@@ -51,6 +54,24 @@ sealed class Message {
     data class Leave(
         val gameIds: List<String>
     ) : Message()
+
+    @Serializable
+    @SerialName("gameAction")
+    data class GameActionRelay(
+        val envelope: GameActionEnvelope
+    ) : Message()
+
+    @Serializable
+    @SerialName("endTurn")
+    data class EndTurn(
+        val gameId: String, val civName: String
+    ) : Message()
+
+    @Serializable
+    @SerialName("turnAdvance")
+    data class TurnAdvance(
+        val gameId: String, val newTurns: Int
+    ) : Message()
 }
 
 // used when receiving a message
@@ -72,6 +93,30 @@ sealed class Response {
     @SerialName("error")
     data class Error(
         val message: String
+    ) : Response()
+
+    @Serializable
+    @SerialName("gameAction")
+    data class GameActionRelay(
+        val envelope: GameActionEnvelope
+    ) : Response()
+
+    @Serializable
+    @SerialName("gameActionRejected")
+    data class GameActionRejected(
+        val actionId: String, val reason: String
+    ) : Response()
+
+    @Serializable
+    @SerialName("playerEndedTurn")
+    data class PlayerEndedTurn(
+        val gameId: String, val civName: String, val finishedPlayers: List<String> = emptyList()
+    ) : Response()
+
+    @Serializable
+    @SerialName("turnAdvanced")
+    data class TurnAdvanced(
+        val gameId: String, val newTurns: Int
     ) : Response()
 }
 
@@ -103,6 +148,7 @@ object ChatWebSocket {
                 // DO NOT OMIT
                 // if omitted the "type" field will be missing from all outgoing messages
                 classDiscriminatorMode = ClassDiscriminatorMode.ALL_JSON_OBJECTS
+                ignoreUnknownKeys = true  // server injects type discriminators on non-sealed classes too
             })
         }
     }
@@ -198,6 +244,14 @@ object ChatWebSocket {
                         )
 
                         is Response.JoinSuccess -> Unit // TODO
+
+                        // Simultaneous mode action relay — forward to ActionBroadcastManager
+                        is Response.GameActionRelay,
+                        is Response.GameActionRejected,
+                        is Response.PlayerEndedTurn,
+                        is Response.TurnAdvanced -> {
+                            ChatStore.onActionResponse?.invoke(response)
+                        }
                     }
                 }
             }

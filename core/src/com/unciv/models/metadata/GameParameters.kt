@@ -48,6 +48,7 @@ class GameParameters : IsPartOfGameInfoSerialization { // Default values are the
     var isOnlineMultiplayer = false
     var gameMode = GameMode.Simultaneous
     val isSimultaneousGame get() = isOnlineMultiplayer && gameMode == GameMode.Simultaneous
+    var hostPlayerId = ""
     var multiplayerServerUrl: String? = null
     var anyoneCanSpectate = true
     /** After this amount of minutes, anyone can choose to 'skip turn' of the current player to keep the game going */
@@ -92,6 +93,7 @@ class GameParameters : IsPartOfGameInfoSerialization { // Default values are the
         parameters.showVictoryStats = showVictoryStats
         parameters.showDemographics = showDemographics
         parameters.isOnlineMultiplayer = isOnlineMultiplayer
+        parameters.hostPlayerId = hostPlayerId
         parameters.multiplayerServerUrl = multiplayerServerUrl
         parameters.anyoneCanSpectate = anyoneCanSpectate
         parameters.baseRuleset = baseRuleset

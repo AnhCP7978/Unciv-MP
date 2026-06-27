@@ -1,0 +1,83 @@
+package com.unciv.logic.multiplayer
+
+import com.unciv.logic.map.mapunit.MapUnit
+import com.unciv.logic.map.tile.Tile
+import com.unciv.models.UnitAction
+import com.unciv.models.UnitActionType
+import com.unciv.ui.screens.worldscreen.WorldScreen
+
+/**
+ * Lightweight hook that intercepts unit actions in simultaneous multiplayer mode.
+ * Non-host players have their actions routed through the [ActionBroadcastManager]
+ * instead of executing locally.
+ *
+ * The host applies actions immediately and broadcasts the result.
+ */
+object SimultaneousModeInterceptor {
+
+    /**
+     * Called before a unit move is executed locally.
+     * @return true if the action was intercepted (broadcast mode) — caller should skip local execution
+     */
+    fun interceptMove(
+        worldScreen: WorldScreen,
+        unit: MapUnit,
+        targetTile: Tile,
+    ): Boolean {
+        val gameInfo = worldScreen.gameInfo
+        if (!gameInfo.gameParameters.isSimultaneousGame) return false
+
+        val broadcastManager = worldScreen.actionBroadcastManager ?: return false
+        val fromPos = unit.currentTile.position
+
+        // Host applies locally AND broadcasts — don't intercept, but still send
+        if (broadcastManager.isHost()) {
+            broadcastManager.sendMoveAction(
+                unitId = unit.id,
+                fromX = fromPos.x, fromY = fromPos.y,
+                toX = targetTile.position.x, toY = targetTile.position.y,
+                civName = unit.civ.civName,
+            )
+            return false // let host execute locally too
+        }
+
+        // Non-host: send pending move and block local execution
+        broadcastManager.sendMoveAction(
+            unitId = unit.id,
+            fromX = fromPos.x, fromY = fromPos.y,
+            toX = targetTile.position.x, toY = targetTile.position.y,
+            civName = unit.civ.civName,
+        )
+        return true
+    }
+
+    /**
+     * Intercept a unit action (found city, etc).
+     * The caller should return the replacement action (wrapped in broadcast)
+     * or null to continue with original action.
+     */
+    fun interceptUnitAction(
+        worldScreen: WorldScreen,
+        unit: MapUnit,
+        action: UnitAction,
+        originalAction: () -> Unit,
+    ): (() -> Unit)? {
+        val gameInfo = worldScreen.gameInfo
+        if (!gameInfo.gameParameters.isSimultaneousGame) return null
+
+        val broadcastManager = worldScreen.actionBroadcastManager ?: return null
+
+        when (action.type) {
+            UnitActionType.FoundCity -> {
+                val tile = unit.getTile()
+                if (broadcastManager.isHost()) {
+                    broadcastManager.sendFoundCityAction(unit.id, tile.position.x, tile.position.y, unit.civ.civName)
+                    return null // let host execute locally too
+                }
+                broadcastManager.sendFoundCityAction(unit.id, tile.position.x, tile.position.y, unit.civ.civName)
+                return {} // no-op, blocks original
+            }
+            else -> return null  // don't intercept other actions
+        }
+    }
+}

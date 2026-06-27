@@ -13,6 +13,7 @@ import com.unciv.logic.BackwardCompatibility.migrateToTileHistory
 import com.unciv.logic.BackwardCompatibility.removeMissingModReferences
 import com.unciv.logic.GameInfoPreview.Companion.randomGameId
 import com.unciv.logic.automation.Timers.Companion.timeThis
+import com.unciv.logic.multiplayer.SimultaneousTurnState
 import com.unciv.logic.automation.civilization.BarbarianManager
 import com.unciv.logic.city.City
 import com.unciv.logic.civilization.*
@@ -107,6 +108,7 @@ class GameInfo : IsPartOfGameInfoSerialization, HasGameInfoSerializationVersion 
     var difficulty = "Chieftain" // difficulty is game-wide, think what would happen if 2 human players could play on different difficulties?
     var tileMap: TileMap = TileMap()
     var gameParameters = GameParameters()
+    var simultaneousTurnState = SimultaneousTurnState()
     var turns = 0
     var oneMoreTurnMode = false
     var currentPlayer = ""
@@ -194,6 +196,10 @@ class GameInfo : IsPartOfGameInfoSerialization, HasGameInfoSerializationVersion 
         toReturn.turns = turns
         toReturn.difficulty = difficulty
         toReturn.gameParameters = gameParameters
+        toReturn.simultaneousTurnState = SimultaneousTurnState().apply {
+            hostCivName = this@GameInfo.simultaneousTurnState.hostCivName
+            playersFinishedTurn.addAll(this@GameInfo.simultaneousTurnState.playersFinishedTurn)
+        }
         toReturn.gameId = gameId
         toReturn.diplomaticVictoryVotesCast.putAll(diplomaticVictoryVotesCast)
         toReturn.oneMoreTurnMode = oneMoreTurnMode

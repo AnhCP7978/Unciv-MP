@@ -20,6 +20,7 @@ import com.unciv.logic.map.*
 import com.unciv.logic.map.mapunit.MapUnit
 import com.unciv.logic.map.mapunit.movement.UnitMovement
 import com.unciv.logic.map.tile.Tile
+import com.unciv.logic.multiplayer.SimultaneousModeInterceptor
 import com.unciv.models.Spy
 import com.unciv.models.UncivSound
 import com.unciv.ui.audio.SoundPlayer
@@ -279,6 +280,10 @@ class WorldMapHolder(
     }
 
     internal fun moveUnitToTargetTile(selectedUnits: List<MapUnit>, targetTile: Tile) {
+        // Simultaneous multiplayer: route through broadcast manager instead of local execution
+        if (SimultaneousModeInterceptor.interceptMove(worldScreen, selectedUnits.first(), targetTile))
+            return
+
         // this can take a long time, because of the unit-to-tile calculation needed, so we put it in a different thread
         // THIS PART IS REALLY ANNOYING
         // So lets say you have 2 units you want to move in the same direction, right

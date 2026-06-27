@@ -15,6 +15,7 @@ import com.unciv.logic.civilization.diplomacy.DiplomaticStatus
 import com.unciv.logic.event.EventBus
 import com.unciv.logic.map.HexCoord
 import com.unciv.logic.map.MapVisualization
+import com.unciv.logic.multiplayer.ActionBroadcastManager
 import com.unciv.logic.multiplayer.MultiplayerGameUpdated
 import com.unciv.logic.multiplayer.storage.FileStorageRateLimitReached
 import com.unciv.logic.multiplayer.storage.MultiplayerAuthException
@@ -108,6 +109,11 @@ class WorldScreen(
         get() = isPlayersTurn && !viewingCiv.isSpectator()
 
     val mapHolder = WorldMapHolder(this, gameInfo.tileMap)
+
+    /** Manages simultaneous multiplayer action broadcast. Null when not simultaneous. */
+    val actionBroadcastManager: ActionBroadcastManager? =
+        if (gameInfo.gameParameters.isSimultaneousGame) ActionBroadcastManager(this)
+        else null
 
     internal var waitingForAutosave = false
     private val mapVisualization = MapVisualization(gameInfo, viewingCiv)
@@ -577,6 +583,10 @@ class WorldScreen(
     }
 
     fun nextTurn() {
+        // In simultaneous mode, only the host processes turns.
+        // Non-hosts use ActionBroadcastManager.sendEndTurn instead.
+        if (gameInfo.gameParameters.isSimultaneousGame) return
+
         isPlayersTurn = false
         shouldUpdate = true
         val progressBar = NextTurnProgress(nextTurnButton)
