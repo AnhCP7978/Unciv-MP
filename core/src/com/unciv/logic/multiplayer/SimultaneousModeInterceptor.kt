@@ -56,6 +56,9 @@ object SimultaneousModeInterceptor {
      * Intercept a unit action (found city, etc).
      * The caller should return the replacement action (wrapped in broadcast)
      * or null to continue with original action.
+     *
+     * Host: sends validated=true and lets local execution proceed (returns null).
+     * Non-host: sends validated=false and blocks (returns {}).
      */
     fun interceptUnitAction(
         worldScreen: WorldScreen,
@@ -67,15 +70,16 @@ object SimultaneousModeInterceptor {
         if (!gameInfo.gameParameters.isSimultaneousGame) return null
 
         val broadcastManager = worldScreen.actionBroadcastManager ?: return null
+        val isHost = broadcastManager.isHost()
 
         when (action.type) {
             UnitActionType.FoundCity -> {
                 val tile = unit.getTile()
-                // Host sends validated=true (no validation needed), non-host sends validated=false
                 broadcastManager.sendFoundCityAction(
                     unit.id, tile.position.x, tile.position.y, unit.civ.civName
                 )
-                return {} // block local execution for ALL players — wait for host echo
+                // Host: don't block — let local game logic execute normally
+                return if (isHost) null else ({})
             }
             UnitActionType.HurryResearch,
             UnitActionType.HurryPolicy,
@@ -85,17 +89,41 @@ object SimultaneousModeInterceptor {
                 broadcastManager.sendGreatPersonAction(
                     unit.id, action.type.name, unit.civ.civName
                 )
-                return {}
+                return if (isHost) null else ({})
             }
             UnitActionType.Upgrade -> {
                 val upgradeAction = action as? UpgradeUnitAction ?: return null
                 broadcastManager.sendUpgradeAction(
                     unit.id, upgradeAction.unitToUpgradeTo.name, unit.civ.civName
                 )
-                return {} // block local execution — wait for host echo
+                return if (isHost) null else ({})
             }
             else -> return null  // don't intercept other actions
         }
+    }
+
+    /**
+     * Intercept a purchase action (buying construction in a city).
+     * @return true if the action was intercepted — caller should skip local execution
+     */
+    fun interceptPurchase(
+        worldScreen: WorldScreen,
+        constructionName: String,
+        cityId: String,
+        queuePosition: Int,
+        stat: String,
+        tileX: Int?,
+        tileY: Int?,
+        civName: String,
+    ): Boolean {
+        val gameInfo = worldScreen.gameInfo
+        if (!gameInfo.gameParameters.isSimultaneousGame) return false
+        val broadcastManager = worldScreen.actionBroadcastManager ?: return false
+
+        broadcastManager.sendPurchaseAction(constructionName, cityId, queuePosition, stat, tileX, tileY, civName)
+        // Block local execution for ALL — the broadcast echo (validated=true for host,
+        // or validated=true from host validation for non-host) will apply it once.
+        return true
     }
 
     /**

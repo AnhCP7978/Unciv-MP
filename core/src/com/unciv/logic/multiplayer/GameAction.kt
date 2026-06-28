@@ -64,7 +64,7 @@ sealed class GameAction {
     @SerialName("greatPerson")
     data class GreatPersonAction(
         val unitId: Int,
-        val actionType: String,  // "HurryResearch", "HurryPolicy", "HurryWonder", "HurryBuilding", "ConstructImprovement", "ConductTradeMission"
+        val actionType: String, // "HurryResearch", "HurryPolicy", "HurryWonder", "HurryBuilding", "ConstructImprovement", "ConductTradeMission"
         override val civName: String,
     ) : GameAction()
 
@@ -81,6 +81,18 @@ sealed class GameAction {
     data class PromoteAction(
         val unitId: Int,
         val promotionName: String,
+        override val civName: String,
+    ) : GameAction()
+
+    @Serializable
+    @SerialName("purchase")
+    data class PurchaseAction(
+        val constructionName: String,
+        val cityId: String,
+        val queuePosition: Int = -1,
+        val stat: String,   // "Gold" or "Faith"
+        val tileX: Int? = null,
+        val tileY: Int? = null,
         override val civName: String,
     ) : GameAction()
 

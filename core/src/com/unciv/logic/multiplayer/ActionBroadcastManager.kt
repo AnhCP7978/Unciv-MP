@@ -15,6 +15,7 @@ import com.unciv.logic.map.tile.Tile
 import com.unciv.logic.multiplayer.chat.ChatWebSocket
 import com.unciv.logic.multiplayer.chat.ChatStore
 import com.unciv.logic.multiplayer.chat.Response
+import com.unciv.models.stats.Stat
 import com.unciv.ui.screens.worldscreen.WorldScreen
 import com.unciv.utils.Concurrency
 import com.unciv.utils.debug
@@ -35,9 +36,6 @@ import kotlin.uuid.Uuid
 class ActionBroadcastManager(private val worldScreen: WorldScreen) {
 
     private val gameId get() = worldScreen.gameInfo.gameId
-
-    /** Host-only: tracks which players have ended their turn */
-    private val playersFinishedTurn = mutableSetOf<String>()
 
     /** Prevents the local player from double-sending EndTurn */
     @Volatile
@@ -62,7 +60,8 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
     fun getWaitingStatus(): String {
         val allHumans = worldScreen.gameInfo.civilizations
             .filter { it.isAlive() && it.playerType == PlayerType.Human }
-        val finished = allHumans.count { it.civName in playersFinishedTurn }
+        val finishedPlayers = worldScreen.gameInfo.simultaneousTurnState.playersFinishedTurn
+        val finished = allHumans.count { it.civName in finishedPlayers }
         return "Waiting ($finished/${allHumans.size})"
     }
 
@@ -221,10 +220,46 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
         )
     }
 
+    @OptIn(ExperimentalUuidApi::class)
+    fun sendPurchaseAction(
+        constructionName: String,
+        cityId: String,
+        queuePosition: Int = -1,
+        stat: String,
+        tileX: Int? = null,
+        tileY: Int? = null,
+        civName: String,
+    ) {
+        val envelope = GameActionEnvelope(
+            gameId = gameId,
+            action = GameAction.PurchaseAction(
+                constructionName = constructionName,
+                cityId = cityId,
+                queuePosition = queuePosition,
+                stat = stat,
+                tileX = tileX,
+                tileY = tileY,
+                civName = civName,
+            ),
+            actionId = Uuid.random().toString(),
+            validated = isHost(),
+        )
+        ChatWebSocket.requestMessageSend(
+            com.unciv.logic.multiplayer.chat.Message.GameActionRelay(envelope)
+        )
+    }
+
     /** Called when the local player clicks "End Turn" */
     fun sendEndTurn(civName: String) {
         if (hasEndedTurn) return  // prevent double-submit
         hasEndedTurn = true
+
+        // Host tracks itself immediately instead of waiting for server echo
+        if (isHost()) {
+            worldScreen.gameInfo.simultaneousTurnState.playersFinishedTurn.add(civName)
+            debug("Host %s ended turn (%d/?)", civName,
+                worldScreen.gameInfo.simultaneousTurnState.playersFinishedTurn.size)
+        }
 
         // Gather civ choices for batch sync
         val choicesJson = if (!isHost()) {
@@ -330,6 +365,15 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
                 debug("Applying remote promote: unit %s <- %s",
                     action.unitId, action.promotionName)
                 applyRemotePromote(action)
+            }
+            is GameAction.PurchaseAction -> {
+                if (!envelope.validated) {
+                    if (isHost()) hostValidatePurchase(envelope)
+                    return
+                }
+                debug("Applying remote purchase: %s in %s",
+                    action.constructionName, action.cityId)
+                applyRemotePurchase(action)
             }
             else -> {}
         }
@@ -717,6 +761,43 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
     }
 
     // ──────────────────────────────────────
+    //  Purchase
+    // ──────────────────────────────────────
+
+    private fun hostValidatePurchase(envelope: GameActionEnvelope) {
+        val action = envelope.action as? GameAction.PurchaseAction ?: return
+        val civ = worldScreen.gameInfo.civilizations.firstOrNull { it.civName == action.civName } ?: return
+        val city = civ.cities.firstOrNull { it.id == action.cityId } ?: return
+        val stat = try { Stat.valueOf(action.stat) } catch (_: Exception) { return }
+        val tile = if (action.tileX != null && action.tileY != null)
+            worldScreen.gameInfo.tileMap[action.tileX, action.tileY]
+        else null
+
+        if (!city.cityConstructions.purchaseConstruction(action.constructionName, action.queuePosition, false, stat, tile)) {
+            debug("Host rejected purchase: %s in %s", action.constructionName, action.cityId)
+            return
+        }
+
+        val validatedEnvelope = envelope.copy(validated = true)
+        ChatWebSocket.requestMessageSend(
+            com.unciv.logic.multiplayer.chat.Message.GameActionRelay(validatedEnvelope)
+        )
+        Gdx.app.postRunnable { worldScreen.shouldUpdate = true }
+    }
+
+    private fun applyRemotePurchase(action: GameAction.PurchaseAction) {
+        val civ = worldScreen.gameInfo.civilizations.firstOrNull { it.civName == action.civName } ?: return
+        val city = civ.cities.firstOrNull { it.id == action.cityId } ?: return
+        val stat = try { Stat.valueOf(action.stat) } catch (_: Exception) { return }
+        val tile = if (action.tileX != null && action.tileY != null)
+            worldScreen.gameInfo.tileMap[action.tileX, action.tileY]
+        else null
+
+        city.cityConstructions.purchaseConstruction(action.constructionName, action.queuePosition, false, stat, tile)
+        Gdx.app.postRunnable { worldScreen.shouldUpdate = true }
+    }
+
+    // ──────────────────────────────────────
     //  Host-only: end-turn tracking
     // ──────────────────────────────────────
 
@@ -734,7 +815,9 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
     private fun onRemotePlayerEndedTurn(response: Response.PlayerEndedTurn) {
         if (!isHost()) return  // non-hosts don't track this
 
-        playersFinishedTurn.add(response.civName)
+        val finishedPlayers = worldScreen.gameInfo.simultaneousTurnState.playersFinishedTurn
+        if (response.civName !in finishedPlayers)
+            finishedPlayers.add(response.civName)
 
         // Store pending choices for batch sync
         if (response.choicesJson != null) {
@@ -747,9 +830,9 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
             .toSet()
 
         debug("Player %s ended turn (%d/%d)", response.civName,
-            playersFinishedTurn.size, allHumans.size)
+            finishedPlayers.size, allHumans.size)
 
-        if (allHumans.all { it in playersFinishedTurn }) {
+        if (allHumans.all { it in finishedPlayers }) {
             hostAdvanceTurn()
         }
     }
@@ -820,6 +903,9 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
 
             // Load the new state locally (host)
             UncivGame.Current.loadGame(gameClone)
+
+            // Reset tracking for the new turn
+            resetTurnTracking()
         }
     }
 
@@ -834,7 +920,7 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
 
     /** Reset the turn-end tracking (called when a new turn starts) */
     fun resetTurnTracking() {
-        playersFinishedTurn.clear()
+        worldScreen.gameInfo.simultaneousTurnState.reset()
         pendingChoices.clear()
         hasEndedTurn = false
     }
