@@ -237,6 +237,78 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
     }
 
     @OptIn(ExperimentalUuidApi::class)
+    fun sendDisbandUnitAction(unitId: Int, civName: String) {
+        val envelope = GameActionEnvelope(
+            gameId = gameId,
+            action = GameAction.DisbandUnitAction(
+                unitId = unitId, civName = civName,
+            ),
+            actionId = Uuid.random().toString(),
+            validated = isHost(),
+        )
+        ChatWebSocket.requestMessageSend(
+            com.unciv.logic.multiplayer.chat.Message.GameActionRelay(envelope)
+        )
+    }
+
+    @OptIn(ExperimentalUuidApi::class)
+    fun sendPillageAction(unitId: Int, civName: String) {
+        val envelope = GameActionEnvelope(
+            gameId = gameId,
+            action = GameAction.PillageAction(
+                unitId = unitId, civName = civName,
+            ),
+            actionId = Uuid.random().toString(),
+            validated = isHost(),
+        )
+        ChatWebSocket.requestMessageSend(
+            com.unciv.logic.multiplayer.chat.Message.GameActionRelay(envelope)
+        )
+    }
+
+    @OptIn(ExperimentalUuidApi::class)
+    fun sendAdoptPolicyAction(policyName: String, civName: String) {
+        val envelope = GameActionEnvelope(
+            gameId = gameId,
+            action = GameAction.AdoptPolicyAction(
+                policyName = policyName, civName = civName,
+            ),
+            actionId = Uuid.random().toString(),
+            validated = isHost(),
+        )
+        ChatWebSocket.requestMessageSend(
+            com.unciv.logic.multiplayer.chat.Message.GameActionRelay(envelope)
+        )
+    }
+
+    @OptIn(ExperimentalUuidApi::class)
+    fun sendStartImprovementAction(
+        unitId: Int,
+        tileX: Int,
+        tileY: Int,
+        improvementName: String,
+        secondImprovementName: String?,
+        civName: String,
+    ) {
+        val envelope = GameActionEnvelope(
+            gameId = gameId,
+            action = GameAction.StartImprovementAction(
+                unitId = unitId,
+                tileX = tileX,
+                tileY = tileY,
+                improvementName = improvementName,
+                secondImprovementName = secondImprovementName,
+                civName = civName,
+            ),
+            actionId = Uuid.random().toString(),
+            validated = isHost(),
+        )
+        ChatWebSocket.requestMessageSend(
+            com.unciv.logic.multiplayer.chat.Message.GameActionRelay(envelope)
+        )
+    }
+
+    @OptIn(ExperimentalUuidApi::class)
     fun sendPurchaseAction(
         constructionName: String,
         cityId: String,
@@ -399,6 +471,42 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
                 debug("Applying remote fortify: unit %s type %s",
                     action.unitId, action.fortifyType)
                 applyRemoteFortify(action)
+            }
+            is GameAction.PillageAction -> {
+                if (!envelope.validated) {
+                    if (isHost()) hostValidatePillage(envelope)
+                    return
+                }
+                debug("Applying remote pillage: unit %s",
+                    action.unitId)
+                applyRemotePillage(action)
+            }
+            is GameAction.AdoptPolicyAction -> {
+                if (!envelope.validated) {
+                    if (isHost()) hostValidateAdoptPolicy(envelope)
+                    return
+                }
+                debug("Applying remote adopt policy: %s for %s",
+                    action.policyName, action.civName)
+                applyRemoteAdoptPolicy(action)
+            }
+            is GameAction.StartImprovementAction -> {
+                if (!envelope.validated) {
+                    if (isHost()) hostValidateStartImprovement(envelope)
+                    return
+                }
+                debug("Applying remote start improvement: %s at (%s, %s)",
+                    action.improvementName, action.tileX, action.tileY)
+                applyRemoteStartImprovement(action)
+            }
+            is GameAction.DisbandUnitAction -> {
+                if (!envelope.validated) {
+                    if (isHost()) hostValidateDisbandUnit(envelope)
+                    return
+                }
+                debug("Applying remote disband: unit %s for %s",
+                    action.unitId, action.civName)
+                applyRemoteDisbandUnit(action)
             }
             else -> {}
         }
@@ -859,6 +967,164 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
             "Fortify" -> unit.fortify()
             "FortifyUntilHealed" -> unit.fortifyUntilHealed()
         }
+        Gdx.app.postRunnable { worldScreen.shouldUpdate = true }
+    }
+
+    // ──────────────────────────────────────
+    //  Pillage
+    // ──────────────────────────────────────
+
+    private fun hostValidatePillage(envelope: GameActionEnvelope) {
+        val action = envelope.action as? GameAction.PillageAction ?: return
+        val tileMap = worldScreen.gameInfo.tileMap
+        val unit = tileMap.tileList.asSequence()
+            .flatMap { it.getUnits().asSequence() }
+            .firstOrNull { it.id == action.unitId && it.civ.civName == action.civName } ?: return
+        if (unit.isDestroyed) return
+        if (!unit.hasMovement()) return
+        val tile = unit.currentTile
+        if (!tile.canPillageTile() || tile.getImprovementToPillageName() == null) return
+        // Valid
+        val validatedEnvelope = envelope.copy(validated = true)
+        ChatWebSocket.requestMessageSend(
+            com.unciv.logic.multiplayer.chat.Message.GameActionRelay(validatedEnvelope)
+        )
+        Gdx.app.postRunnable { worldScreen.shouldUpdate = true }
+    }
+
+    private fun applyRemotePillage(action: GameAction.PillageAction) {
+        val tileMap = worldScreen.gameInfo.tileMap
+        val unit = tileMap.tileList.asSequence()
+            .flatMap { it.getUnits().asSequence() }
+            .firstOrNull { it.id == action.unitId && it.civ.civName == action.civName } ?: return
+        if (unit.isDestroyed) return
+        val tile = unit.currentTile
+
+        val pillagedImprovement = tile.getImprovementToPillageName() ?: return
+        val pillagingImprovement = tile.canPillageTileImprovement()
+        val pillageText = "An enemy [${unit.baseUnit.name}] has pillaged our [$pillagedImprovement]"
+        val icon = "ImprovementIcons/$pillagedImprovement"
+        tile.getOwner()?.addNotification(
+            pillageText,
+            tile.position,
+            com.unciv.logic.civilization.NotificationCategory.War,
+            icon,
+            com.unciv.logic.civilization.NotificationIcon.War,
+            unit.baseUnit.name
+        )
+
+        com.unciv.ui.screens.worldscreen.unit.actions.UnitActionsPillage.pillageLooting(tile, unit)
+        tile.setPillaged()
+        if (tile.resource != null) tile.getOwner()?.cache?.updateCivResources()
+
+        val freePillage = unit.hasUnique(com.unciv.models.ruleset.unique.UniqueType.NoMovementToPillage, checkCivInfoUniques = true)
+        if (!freePillage) unit.useMovementPoints(1f)
+
+        if (pillagingImprovement) {
+            var healAmount = 25f
+            for (unique in unit.getMatchingUniques(com.unciv.models.ruleset.unique.UniqueType.PercentHealthFromPillaging, checkCivInfoUniques = true)) {
+                healAmount *= unique.params[0].toFloat() / 100f
+            }
+            unit.healBy(healAmount.toInt())
+        }
+
+        if (tile.getImprovementToPillage()?.hasUnique(com.unciv.models.ruleset.unique.UniqueType.DestroyedWhenPillaged) == true) {
+            tile.removeImprovement()
+        }
+
+        Gdx.app.postRunnable { worldScreen.shouldUpdate = true }
+    }
+
+    // ──────────────────────────────────────
+    //  Start Improvement (worker build)
+    // ──────────────────────────────────────
+
+    private fun hostValidateStartImprovement(envelope: GameActionEnvelope) {
+        val action = envelope.action as? GameAction.StartImprovementAction ?: return
+        val tileMap = worldScreen.gameInfo.tileMap
+        val tile = tileMap.tileList.firstOrNull {
+            it.position.x == action.tileX && it.position.y == action.tileY
+        } ?: return
+        val unit = tile.getUnits().firstOrNull { it.id == action.unitId && it.civ.civName == action.civName } ?: return
+        if (unit.isDestroyed) return
+        val improvement = tileMap.gameInfo.ruleset.tileImprovements[action.improvementName] ?: return
+        if (!unit.canBuildImprovement(improvement)) return
+        // Valid
+        val validatedEnvelope = envelope.copy(validated = true)
+        ChatWebSocket.requestMessageSend(
+            com.unciv.logic.multiplayer.chat.Message.GameActionRelay(validatedEnvelope)
+        )
+        Gdx.app.postRunnable { worldScreen.shouldUpdate = true }
+    }
+
+    private fun applyRemoteStartImprovement(action: GameAction.StartImprovementAction) {
+        val tileMap = worldScreen.gameInfo.tileMap
+        val tile = tileMap.tileList.firstOrNull {
+            it.position.x == action.tileX && it.position.y == action.tileY
+        } ?: return
+        val unit = tile.getUnits().firstOrNull { it.id == action.unitId && it.civ.civName == action.civName } ?: return
+        if (unit.isDestroyed) return
+        val civ = worldScreen.gameInfo.civilizations.firstOrNull { it.civName == action.civName } ?: return
+        val improvement = tileMap.gameInfo.ruleset.tileImprovements[action.improvementName] ?: return
+
+        tile.startWorkingOnImprovement(improvement, civ, unit)
+        if (action.secondImprovementName != null) {
+            val secondImprovement = tileMap.gameInfo.ruleset.tileImprovements[action.secondImprovementName]
+            if (secondImprovement != null) {
+                tile.queueImprovement(secondImprovement, civ, unit)
+            }
+        }
+        unit.action = null // wake up the worker if it's sleeping
+        Gdx.app.postRunnable { worldScreen.shouldUpdate = true }
+    }
+
+    // ──────────────────────────────────────
+    //  Policy adoption
+    // ──────────────────────────────────────
+
+    private fun hostValidateAdoptPolicy(envelope: GameActionEnvelope) {
+        val action = envelope.action as? GameAction.AdoptPolicyAction ?: return
+        val civ = worldScreen.gameInfo.civilizations.firstOrNull { it.civName == action.civName } ?: return
+        val policy = worldScreen.gameInfo.ruleset.policies[action.policyName] ?: return
+        if (!civ.policies.isAdoptable(policy)) return
+        // Valid — echo for all clients to apply once via applyRemoteAdoptPolicy
+        val validatedEnvelope = envelope.copy(validated = true)
+        ChatWebSocket.requestMessageSend(
+            com.unciv.logic.multiplayer.chat.Message.GameActionRelay(validatedEnvelope)
+        )
+    }
+
+    private fun applyRemoteAdoptPolicy(action: GameAction.AdoptPolicyAction) {
+        val civ = worldScreen.gameInfo.civilizations.firstOrNull { it.civName == action.civName } ?: return
+        val policy = worldScreen.gameInfo.ruleset.policies[action.policyName] ?: return
+        if (civ.policies.isAdopted(policy.name)) return
+        civ.policies.adopt(policy)
+        civ.policies.shouldOpenPolicyPicker = false
+        Gdx.app.postRunnable { worldScreen.shouldUpdate = true }
+    }
+
+    // ──────────────────────────────────────
+    //  Disband unit
+    // ──────────────────────────────────────
+
+    private fun hostValidateDisbandUnit(envelope: GameActionEnvelope) {
+        val action = envelope.action as? GameAction.DisbandUnitAction ?: return
+        val civ = worldScreen.gameInfo.civilizations.firstOrNull { it.civName == action.civName } ?: return
+        val unit = civ.units.getCivUnits().firstOrNull { it.id == action.unitId } ?: return
+        if (unit.isDestroyed) return
+        // Valid — echo for all clients to apply
+        val validatedEnvelope = envelope.copy(validated = true)
+        ChatWebSocket.requestMessageSend(
+            com.unciv.logic.multiplayer.chat.Message.GameActionRelay(validatedEnvelope)
+        )
+    }
+
+    private fun applyRemoteDisbandUnit(action: GameAction.DisbandUnitAction) {
+        val civ = worldScreen.gameInfo.civilizations.firstOrNull { it.civName == action.civName } ?: return
+        val unit = civ.units.getCivUnits().firstOrNull { it.id == action.unitId } ?: return
+        if (unit.isDestroyed) return
+        unit.disband()
+        civ.updateStatsForNextTurn()
         Gdx.app.postRunnable { worldScreen.shouldUpdate = true }
     }
 

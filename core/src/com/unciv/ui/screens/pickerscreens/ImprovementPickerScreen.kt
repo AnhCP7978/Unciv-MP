@@ -60,12 +60,24 @@ class ImprovementPickerScreen(
         if (improvement == null || tileMarkedForCreatesOneImprovement) return
         if (improvement.name == Constants.cancelImprovementOrder) {
             tile.stopWorkingOnImprovement()
-            // no onAccept() - Worker can stay selected
         } else {
+            // Always apply locally so UI shows countdown immediately
             if (improvement.name != tile.improvementInProgress) {
                 tile.startWorkingOnImprovement(improvement, currentPlayerCiv, unit)
                 if (secondImprovement != null)
                     tile.queueImprovement(secondImprovement, currentPlayerCiv, unit)
+            }
+            // In simultaneous multiplayer, also broadcast to host
+            if (gameInfo.gameParameters.isSimultaneousGame) {
+                com.unciv.UncivGame.Current.worldScreen?.actionBroadcastManager
+                    ?.sendStartImprovementAction(
+                        unitId = unit.id,
+                        tileX = tile.position.x,
+                        tileY = tile.position.y,
+                        improvementName = improvement.name,
+                        secondImprovementName = secondImprovement?.name,
+                        civName = currentPlayerCiv.civName,
+                    )
             }
             unit.action = null // this is to "wake up" the worker if it's sleeping
             onAccept()

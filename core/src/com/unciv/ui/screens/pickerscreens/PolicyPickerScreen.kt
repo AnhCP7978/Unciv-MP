@@ -666,7 +666,12 @@ class PolicyPickerScreen(
         // Evil people clicking on buttons too fast to confuse the screen - #4977
         if (!policy.isPickable(viewingCiv, canChangeState)) return
 
-        viewingCiv.policies.adopt(policy)
+        if (viewingCiv.gameInfo.gameParameters.isSimultaneousGame) {
+            com.unciv.UncivGame.Current.worldScreen?.actionBroadcastManager
+                ?.sendAdoptPolicyAction(policy.name, viewingCiv.civName)
+        } else {
+            viewingCiv.policies.adopt(policy)
+        }
 
         // If we've moved to another screen in the meantime (great person pick, victory screen) ignore this
         // update policies

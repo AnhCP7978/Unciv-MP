@@ -117,6 +117,38 @@ sealed class GameAction {
         val gameId: String,
         override val civName: String = "",
     ) : GameAction()
+
+    @Serializable
+    @SerialName("pillage")
+    data class PillageAction(
+        val unitId: Int,
+        override val civName: String,
+    ) : GameAction()
+
+    @Serializable
+    @SerialName("startImprovement")
+    data class StartImprovementAction(
+        val unitId: Int,
+        val tileX: Int,
+        val tileY: Int,
+        val improvementName: String,
+        val secondImprovementName: String? = null,
+        override val civName: String,
+    ) : GameAction()
+
+    @Serializable
+    @SerialName("adoptPolicy")
+    data class AdoptPolicyAction(
+        val policyName: String,
+        override val civName: String,
+    ) : GameAction()
+
+    @Serializable
+    @SerialName("disbandUnit")
+    data class DisbandUnitAction(
+        val unitId: Int,
+        override val civName: String,
+    ) : GameAction()
 }
 
 /**

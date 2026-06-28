@@ -127,9 +127,9 @@ class PromotionPickerScreen private constructor(
                 com.unciv.UncivGame.Current.worldScreen?.actionBroadcastManager
                     ?.sendPromoteAction(unit.id, promotionName, unit.civ.civName)
             }
-        } else {
-            for (promotionName in promotionNames)
-                unit.promotions.addPromotion(promotionName)
+            onChange?.invoke()
+            game.popScreen()
+            return
         }
 
         onChange?.invoke()

@@ -78,8 +78,8 @@ object SimultaneousModeInterceptor {
                 broadcastManager.sendFoundCityAction(
                     unit.id, tile.position.x, tile.position.y, unit.civ.civName
                 )
-                // Host: don't block — let local game logic execute normally
-                return if (isHost) null else ({})
+                // Block ALL players — apply only via broadcast echo (prevents double-apply crash)
+                return ({})
             }
             UnitActionType.HurryResearch,
             UnitActionType.HurryPolicy,
@@ -105,6 +105,10 @@ object SimultaneousModeInterceptor {
             UnitActionType.FortifyUntilHealed -> {
                 broadcastManager.sendFortifyAction(unit.id, "FortifyUntilHealed", unit.civ.civName)
                 return if (isHost) null else ({})
+            }
+            UnitActionType.Pillage -> {
+                broadcastManager.sendPillageAction(unit.id, unit.civ.civName)
+                return ({})  // block ALL players — apply only via broadcast echo
             }
             else -> return null  // don't intercept other actions
         }
