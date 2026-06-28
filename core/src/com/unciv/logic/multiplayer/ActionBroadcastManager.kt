@@ -19,6 +19,7 @@ import com.unciv.models.stats.Stat
 import com.unciv.ui.screens.worldscreen.WorldScreen
 import com.unciv.utils.Concurrency
 import com.unciv.utils.debug
+import com.unciv.models.ruleset.INonPerpetualConstruction
 import com.unciv.ui.screens.worldscreen.bottombar.BattleTableHelpers.battleAnimationDeferred
 import kotlinx.serialization.json.Json
 import kotlin.uuid.ExperimentalUuidApi
@@ -221,6 +222,21 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
     }
 
     @OptIn(ExperimentalUuidApi::class)
+    fun sendFortifyAction(unitId: Int, fortifyType: String, civName: String) {
+        val envelope = GameActionEnvelope(
+            gameId = gameId,
+            action = GameAction.FortifyAction(
+                unitId = unitId, fortifyType = fortifyType, civName = civName,
+            ),
+            actionId = Uuid.random().toString(),
+            validated = isHost(),
+        )
+        ChatWebSocket.requestMessageSend(
+            com.unciv.logic.multiplayer.chat.Message.GameActionRelay(envelope)
+        )
+    }
+
+    @OptIn(ExperimentalUuidApi::class)
     fun sendPurchaseAction(
         constructionName: String,
         cityId: String,
@@ -374,6 +390,15 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
                 debug("Applying remote purchase: %s in %s",
                     action.constructionName, action.cityId)
                 applyRemotePurchase(action)
+            }
+            is GameAction.FortifyAction -> {
+                if (!envelope.validated) {
+                    if (isHost()) hostValidateFortify(envelope)
+                    return
+                }
+                debug("Applying remote fortify: unit %s type %s",
+                    action.unitId, action.fortifyType)
+                applyRemoteFortify(action)
             }
             else -> {}
         }
@@ -743,10 +768,17 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
         return true
     }
 
-    /** Host validates the promotion on authoritative state, then echoes validated envelope */
+    /** Host validates the promotion (read-only), then echoes validated envelope.
+     *  Does NOT apply — application happens in [applyRemotePromote] when validated=true echo arrives. */
     private fun hostValidatePromote(envelope: GameActionEnvelope) {
         val action = envelope.action as? GameAction.PromoteAction ?: return
-        if (!performPromoteAction(action)) return
+        val tileMap = worldScreen.gameInfo.tileMap
+        val unit = tileMap.tileList.asSequence()
+            .flatMap { it.getUnits().asSequence() }
+            .firstOrNull { it.id == action.unitId && it.civ.civName == action.civName } ?: return
+        if (unit.isDestroyed) return
+        if (unit.promotions.getAvailablePromotions().none { it.name == action.promotionName }) return
+        // Valid — echo for all clients to apply once via applyRemotePromote
         val validatedEnvelope = envelope.copy(validated = true)
         ChatWebSocket.requestMessageSend(
             com.unciv.logic.multiplayer.chat.Message.GameActionRelay(validatedEnvelope)
@@ -764,16 +796,17 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
     //  Purchase
     // ──────────────────────────────────────
 
+    /** Host validates the purchase (read-only), then echoes validated envelope.
+     *  Does NOT apply — application happens in [applyRemotePurchase] when validated=true echo arrives. */
     private fun hostValidatePurchase(envelope: GameActionEnvelope) {
         val action = envelope.action as? GameAction.PurchaseAction ?: return
         val civ = worldScreen.gameInfo.civilizations.firstOrNull { it.civName == action.civName } ?: return
         val city = civ.cities.firstOrNull { it.id == action.cityId } ?: return
         val stat = try { Stat.valueOf(action.stat) } catch (_: Exception) { return }
-        val tile = if (action.tileX != null && action.tileY != null)
-            worldScreen.gameInfo.tileMap[action.tileX, action.tileY]
-        else null
-
-        if (!city.cityConstructions.purchaseConstruction(action.constructionName, action.queuePosition, false, stat, tile)) {
+        val construction = city.cityConstructions
+            .getConstruction(action.constructionName) as? INonPerpetualConstruction ?: return
+        val constructionBuyCost = construction.getStatBuyCost(city, stat) ?: return
+        if (!city.cityConstructions.isConstructionPurchaseAllowed(construction, stat, constructionBuyCost)) {
             debug("Host rejected purchase: %s in %s", action.constructionName, action.cityId)
             return
         }
@@ -794,6 +827,38 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
         else null
 
         city.cityConstructions.purchaseConstruction(action.constructionName, action.queuePosition, false, stat, tile)
+        Gdx.app.postRunnable { worldScreen.shouldUpdate = true }
+    }
+
+    // ──────────────────────────────────────
+    //  Fortify
+    // ──────────────────────────────────────
+
+    private fun hostValidateFortify(envelope: GameActionEnvelope) {
+        val action = envelope.action as? GameAction.FortifyAction ?: return
+        val tileMap = worldScreen.gameInfo.tileMap
+        val unit = tileMap.tileList.asSequence()
+            .flatMap { it.getUnits().asSequence() }
+            .firstOrNull { it.id == action.unitId && it.civ.civName == action.civName } ?: return
+        if (unit.isDestroyed) return
+        // Valid
+        val validatedEnvelope = envelope.copy(validated = true)
+        ChatWebSocket.requestMessageSend(
+            com.unciv.logic.multiplayer.chat.Message.GameActionRelay(validatedEnvelope)
+        )
+        Gdx.app.postRunnable { worldScreen.shouldUpdate = true }
+    }
+
+    private fun applyRemoteFortify(action: GameAction.FortifyAction) {
+        val tileMap = worldScreen.gameInfo.tileMap
+        val unit = tileMap.tileList.asSequence()
+            .flatMap { it.getUnits().asSequence() }
+            .firstOrNull { it.id == action.unitId && it.civ.civName == action.civName } ?: return
+        if (unit.isDestroyed) return
+        when (action.fortifyType) {
+            "Fortify" -> unit.fortify()
+            "FortifyUntilHealed" -> unit.fortifyUntilHealed()
+        }
         Gdx.app.postRunnable { worldScreen.shouldUpdate = true }
     }
 

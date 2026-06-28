@@ -98,6 +98,14 @@ object SimultaneousModeInterceptor {
                 )
                 return if (isHost) null else ({})
             }
+            UnitActionType.Fortify -> {
+                broadcastManager.sendFortifyAction(unit.id, "Fortify", unit.civ.civName)
+                return if (isHost) null else ({})
+            }
+            UnitActionType.FortifyUntilHealed -> {
+                broadcastManager.sendFortifyAction(unit.id, "FortifyUntilHealed", unit.civ.civName)
+                return if (isHost) null else ({})
+            }
             else -> return null  // don't intercept other actions
         }
     }

@@ -97,6 +97,14 @@ sealed class GameAction {
     ) : GameAction()
 
     @Serializable
+    @SerialName("fortify")
+    data class FortifyAction(
+        val unitId: Int,
+        val fortifyType: String, // "Fortify" or "FortifyUntilHealed"
+        override val civName: String,
+    ) : GameAction()
+
+    @Serializable
     @SerialName("endTurn")
     data class EndTurnAction(
         override val civName: String,
