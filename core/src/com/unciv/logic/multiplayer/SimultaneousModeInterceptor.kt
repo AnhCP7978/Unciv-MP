@@ -15,7 +15,6 @@ import com.unciv.ui.screens.worldscreen.WorldScreen
  * The host applies actions immediately and broadcasts the result.
  */
 object SimultaneousModeInterceptor {
-
     /**
      * Called before a unit move is executed locally.
      * @return true if the action was intercepted (broadcast mode) — caller should skip local execution
@@ -31,17 +30,8 @@ object SimultaneousModeInterceptor {
         val broadcastManager = worldScreen.actionBroadcastManager ?: return false
         val fromPos = unit.currentTile.position
 
+        val isNotHost = !broadcastManager.isHost()
         // Host applies locally AND broadcasts — don't intercept, but still send
-        if (broadcastManager.isHost()) {
-            broadcastManager.sendMoveAction(
-                unitId = unit.id,
-                fromX = fromPos.x, fromY = fromPos.y,
-                toX = targetTile.position.x, toY = targetTile.position.y,
-                civName = unit.civ.civName,
-            )
-            return false // let host execute locally too
-        }
-
         // Non-host: send pending move and block local execution
         broadcastManager.sendMoveAction(
             unitId = unit.id,
@@ -49,7 +39,7 @@ object SimultaneousModeInterceptor {
             toX = targetTile.position.x, toY = targetTile.position.y,
             civName = unit.civ.civName,
         )
-        return true
+        return isNotHost // Let host execute locally too if it's host
     }
 
     /**

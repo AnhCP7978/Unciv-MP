@@ -104,9 +104,7 @@ sealed class Response {
 
     @Serializable
     @SerialName("gameActionRejected")
-    data class GameActionRejected(
-        val actionId: String, val reason: String
-    ) : Response()
+    data class GameActionRejected(val reason: String) : Response()
 
     @Serializable
     @SerialName("playerEndedTurn")

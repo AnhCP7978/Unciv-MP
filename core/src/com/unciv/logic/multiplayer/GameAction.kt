@@ -126,17 +126,6 @@ sealed class GameAction {
     ) : GameAction()
 
     @Serializable
-    @SerialName("startImprovement")
-    data class StartImprovementAction(
-        val unitId: Int,
-        val tileX: Int,
-        val tileY: Int,
-        val improvementName: String,
-        val secondImprovementName: String? = null,
-        override val civName: String,
-    ) : GameAction()
-
-    @Serializable
     @SerialName("adoptPolicy")
     data class AdoptPolicyAction(
         val policyName: String,
@@ -152,8 +141,7 @@ sealed class GameAction {
 }
 
 /**
- * Wrapper sent over the wire so the recipient knows which game this belongs to
- * and can deduplicate by [actionId].
+ * Wrapper sent over the wire so the recipient knows which game this belongs to.
  *
  * @param validated When `false`, this is a raw action from a non-host client.
  *                  When `true`, the host has validated this action — apply it.
@@ -162,6 +150,5 @@ sealed class GameAction {
 data class GameActionEnvelope(
     val gameId: String,
     val action: GameAction,
-    val actionId: String,   // UUID for idempotency
     val validated: Boolean = false,
 )

@@ -53,7 +53,6 @@ data class TilePosition(val x: Int, val y: Int)
 @Serializable
 data class GameActionEnvelope(
     val gameId: String,
-    val actionId: String,
     val validated: Boolean = false,
     /** Raw action payload — server doesn't deserialize it, just passes through */
     val action: kotlinx.serialization.json.JsonElement? = null,
@@ -128,9 +127,7 @@ sealed class Response {
 
     @Serializable
     @SerialName("gameActionRejected")
-    data class GameActionRejected(
-        val actionId: String, val reason: String
-    ) : Response()
+    data class GameActionRejected(val reason: String) : Response()
 
     @Serializable
     @SerialName("playerEndedTurn")

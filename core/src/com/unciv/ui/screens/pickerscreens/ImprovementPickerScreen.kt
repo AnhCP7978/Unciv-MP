@@ -67,18 +67,6 @@ class ImprovementPickerScreen(
                 if (secondImprovement != null)
                     tile.queueImprovement(secondImprovement, currentPlayerCiv, unit)
             }
-            // In simultaneous multiplayer, also broadcast to host
-            if (gameInfo.gameParameters.isSimultaneousGame) {
-                com.unciv.UncivGame.Current.worldScreen?.actionBroadcastManager
-                    ?.sendStartImprovementAction(
-                        unitId = unit.id,
-                        tileX = tile.position.x,
-                        tileY = tile.position.y,
-                        improvementName = improvement.name,
-                        secondImprovementName = secondImprovement?.name,
-                        civName = currentPlayerCiv.civName,
-                    )
-            }
             unit.action = null // this is to "wake up" the worker if it's sleeping
             onAccept()
         }

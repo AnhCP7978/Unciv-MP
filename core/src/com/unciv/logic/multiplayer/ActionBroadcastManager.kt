@@ -23,8 +23,6 @@ import com.unciv.models.ruleset.INonPerpetualConstruction
 import com.unciv.ui.screens.worldscreen.bottombar.BattleTableHelpers.battleAnimationDeferred
 import kotlinx.serialization.json.Json
 import kotlin.math.roundToInt
-import kotlin.uuid.ExperimentalUuidApi
-import kotlin.uuid.Uuid
 
 /**
  * Orchestrates the 2-phase broadcast protocol for simultaneous multiplayer:
@@ -84,7 +82,7 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
                     applyRemoteAction(response.envelope)
                 }
                 is Response.GameActionRejected -> {
-                    debug("Action %s rejected: %s", response.actionId, response.reason)
+                    debug("Action rejected: %s", response.reason)
                 }
                 is Response.PlayerEndedTurn -> {
                     onRemotePlayerEndedTurn(response)
@@ -101,7 +99,6 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
     //  Send (called when local player acts)
     // ──────────────────────────────────────
 
-    @OptIn(ExperimentalUuidApi::class)
     /** Called when the local player performs an action that needs broadcast */
     fun sendMoveAction(unitId: Int, fromX: Int, fromY: Int, toX: Int, toY: Int, civName: String) {
         val envelope = GameActionEnvelope(
@@ -110,7 +107,6 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
                 unitId = unitId, from = TilePosition(fromX, fromY),
                 to = TilePosition(toX, toY), civName = civName,
             ),
-            actionId = Uuid.random().toString(),
             validated = isHost(),  // host validates immediately, non-host sends pending
         )
         ChatWebSocket.requestMessageSend(
@@ -118,14 +114,12 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
         )
     }
 
-    @OptIn(ExperimentalUuidApi::class)
     fun sendFoundCityAction(unitId: Int, tileX: Int, tileY: Int, civName: String) {
         val envelope = GameActionEnvelope(
             gameId = gameId,
             action = GameAction.FoundCityAction(
                 unitId = unitId, tileX = tileX, tileY = tileY, civName = civName,
             ),
-            actionId = Uuid.random().toString(),
             validated = isHost(),
         )
         ChatWebSocket.requestMessageSend(
@@ -133,13 +127,11 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
         )
     }
 
-    @OptIn(ExperimentalUuidApi::class)
     fun sendDeclareWarAction(civName: String, otherCivName: String) {
         val action = GameAction.DeclareWarAction(otherCivName, civName)
         val envelope = GameActionEnvelope(
             gameId = gameId,
             action = action,
-            actionId = Uuid.random().toString(),
             validated = isHost(),  // host declares immediate, non-host needs validation
         )
         ChatWebSocket.requestMessageSend(
@@ -147,14 +139,12 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
         )
     }
 
-    @OptIn(ExperimentalUuidApi::class)
     fun sendAttackAction(unitId: Int, targetTileX: Int, targetTileY: Int, civName: String) {
         val envelope = GameActionEnvelope(
             gameId = gameId,
             action = GameAction.AttackAction(
                 unitId = unitId, targetTileX = targetTileX, targetTileY = targetTileY, civName = civName,
             ),
-            actionId = Uuid.random().toString(),
             validated = isHost(),
         )
         ChatWebSocket.requestMessageSend(
@@ -162,14 +152,12 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
         )
     }
 
-    @OptIn(ExperimentalUuidApi::class)
     fun sendCityBombardAction(cityId: String, targetTileX: Int, targetTileY: Int, civName: String) {
         val envelope = GameActionEnvelope(
             gameId = gameId,
             action = GameAction.CityBombardAction(
                 cityId = cityId, targetTileX = targetTileX, targetTileY = targetTileY, civName = civName,
             ),
-            actionId = Uuid.random().toString(),
             validated = isHost(),
         )
         ChatWebSocket.requestMessageSend(
@@ -177,14 +165,12 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
         )
     }
 
-    @OptIn(ExperimentalUuidApi::class)
     fun sendGreatPersonAction(unitId: Int, actionType: String, civName: String) {
         val envelope = GameActionEnvelope(
             gameId = gameId,
             action = GameAction.GreatPersonAction(
                 unitId = unitId, actionType = actionType, civName = civName,
             ),
-            actionId = Uuid.random().toString(),
             validated = isHost(),
         )
         ChatWebSocket.requestMessageSend(
@@ -192,14 +178,12 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
         )
     }
 
-    @OptIn(ExperimentalUuidApi::class)
     fun sendUpgradeAction(unitId: Int, upgradeToUnitName: String, civName: String) {
         val envelope = GameActionEnvelope(
             gameId = gameId,
             action = GameAction.UpgradeAction(
                 unitId = unitId, upgradeToUnitName = upgradeToUnitName, civName = civName,
             ),
-            actionId = Uuid.random().toString(),
             validated = isHost(),
         )
         ChatWebSocket.requestMessageSend(
@@ -207,14 +191,12 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
         )
     }
 
-    @OptIn(ExperimentalUuidApi::class)
     fun sendPromoteAction(unitId: Int, promotionName: String, civName: String) {
         val envelope = GameActionEnvelope(
             gameId = gameId,
             action = GameAction.PromoteAction(
                 unitId = unitId, promotionName = promotionName, civName = civName,
             ),
-            actionId = Uuid.random().toString(),
             validated = isHost(),
         )
         ChatWebSocket.requestMessageSend(
@@ -222,14 +204,12 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
         )
     }
 
-    @OptIn(ExperimentalUuidApi::class)
     fun sendFortifyAction(unitId: Int, fortifyType: String, civName: String) {
         val envelope = GameActionEnvelope(
             gameId = gameId,
             action = GameAction.FortifyAction(
                 unitId = unitId, fortifyType = fortifyType, civName = civName,
             ),
-            actionId = Uuid.random().toString(),
             validated = isHost(),
         )
         ChatWebSocket.requestMessageSend(
@@ -237,14 +217,12 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
         )
     }
 
-    @OptIn(ExperimentalUuidApi::class)
     fun sendDisbandUnitAction(unitId: Int, civName: String) {
         val envelope = GameActionEnvelope(
             gameId = gameId,
             action = GameAction.DisbandUnitAction(
                 unitId = unitId, civName = civName,
             ),
-            actionId = Uuid.random().toString(),
             validated = isHost(),
         )
         ChatWebSocket.requestMessageSend(
@@ -252,14 +230,12 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
         )
     }
 
-    @OptIn(ExperimentalUuidApi::class)
     fun sendPillageAction(unitId: Int, civName: String) {
         val envelope = GameActionEnvelope(
             gameId = gameId,
             action = GameAction.PillageAction(
                 unitId = unitId, civName = civName,
             ),
-            actionId = Uuid.random().toString(),
             validated = isHost(),
         )
         ChatWebSocket.requestMessageSend(
@@ -267,14 +243,12 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
         )
     }
 
-    @OptIn(ExperimentalUuidApi::class)
     fun sendAdoptPolicyAction(policyName: String, civName: String) {
         val envelope = GameActionEnvelope(
             gameId = gameId,
             action = GameAction.AdoptPolicyAction(
                 policyName = policyName, civName = civName,
             ),
-            actionId = Uuid.random().toString(),
             validated = isHost(),
         )
         ChatWebSocket.requestMessageSend(
@@ -282,34 +256,6 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
         )
     }
 
-    @OptIn(ExperimentalUuidApi::class)
-    fun sendStartImprovementAction(
-        unitId: Int,
-        tileX: Int,
-        tileY: Int,
-        improvementName: String,
-        secondImprovementName: String?,
-        civName: String,
-    ) {
-        val envelope = GameActionEnvelope(
-            gameId = gameId,
-            action = GameAction.StartImprovementAction(
-                unitId = unitId,
-                tileX = tileX,
-                tileY = tileY,
-                improvementName = improvementName,
-                secondImprovementName = secondImprovementName,
-                civName = civName,
-            ),
-            actionId = Uuid.random().toString(),
-            validated = isHost(),
-        )
-        ChatWebSocket.requestMessageSend(
-            com.unciv.logic.multiplayer.chat.Message.GameActionRelay(envelope)
-        )
-    }
-
-    @OptIn(ExperimentalUuidApi::class)
     fun sendPurchaseAction(
         constructionName: String,
         cityId: String,
@@ -330,7 +276,6 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
                 tileY = tileY,
                 civName = civName,
             ),
-            actionId = Uuid.random().toString(),
             validated = isHost(),
         )
         ChatWebSocket.requestMessageSend(
@@ -490,15 +435,6 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
                 debug("Applying remote adopt policy: %s for %s",
                     action.policyName, action.civName)
                 applyRemoteAdoptPolicy(action)
-            }
-            is GameAction.StartImprovementAction -> {
-                if (!envelope.validated) {
-                    if (isHost()) hostValidateStartImprovement(envelope)
-                    return
-                }
-                debug("Applying remote start improvement: %s at (%s, %s)",
-                    action.improvementName, action.tileX, action.tileY)
-                applyRemoteStartImprovement(action)
             }
             is GameAction.DisbandUnitAction -> {
                 if (!envelope.validated) {
@@ -1036,48 +972,6 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
         Gdx.app.postRunnable { worldScreen.shouldUpdate = true }
     }
 
-    // ──────────────────────────────────────
-    //  Start Improvement (worker build)
-    // ──────────────────────────────────────
-
-    private fun hostValidateStartImprovement(envelope: GameActionEnvelope) {
-        val action = envelope.action as? GameAction.StartImprovementAction ?: return
-        val tileMap = worldScreen.gameInfo.tileMap
-        val tile = tileMap.tileList.firstOrNull {
-            it.position.x == action.tileX && it.position.y == action.tileY
-        } ?: return
-        val unit = tile.getUnits().firstOrNull { it.id == action.unitId && it.civ.civName == action.civName } ?: return
-        if (unit.isDestroyed) return
-        val improvement = tileMap.gameInfo.ruleset.tileImprovements[action.improvementName] ?: return
-        if (!unit.canBuildImprovement(improvement)) return
-        // Valid
-        val validatedEnvelope = envelope.copy(validated = true)
-        ChatWebSocket.requestMessageSend(
-            com.unciv.logic.multiplayer.chat.Message.GameActionRelay(validatedEnvelope)
-        )
-        Gdx.app.postRunnable { worldScreen.shouldUpdate = true }
-    }
-
-    private fun applyRemoteStartImprovement(action: GameAction.StartImprovementAction) {
-        val tileMap = worldScreen.gameInfo.tileMap
-        val tile = tileMap.tileList.firstOrNull {
-            it.position.x == action.tileX && it.position.y == action.tileY
-        } ?: return
-        val unit = tile.getUnits().firstOrNull { it.id == action.unitId && it.civ.civName == action.civName } ?: return
-        if (unit.isDestroyed) return
-        val civ = worldScreen.gameInfo.civilizations.firstOrNull { it.civName == action.civName } ?: return
-        val improvement = tileMap.gameInfo.ruleset.tileImprovements[action.improvementName] ?: return
-
-        tile.startWorkingOnImprovement(improvement, civ, unit)
-        if (action.secondImprovementName != null) {
-            val secondImprovement = tileMap.gameInfo.ruleset.tileImprovements[action.secondImprovementName]
-            if (secondImprovement != null) {
-                tile.queueImprovement(secondImprovement, civ, unit)
-            }
-        }
-        unit.action = null // wake up the worker if it's sleeping
-        Gdx.app.postRunnable { worldScreen.shouldUpdate = true }
-    }
 
     // ──────────────────────────────────────
     //  Policy adoption
@@ -1152,9 +1046,8 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
             finishedPlayers.add(response.civName)
 
         // Store pending choices for batch sync
-        if (response.choicesJson != null) {
+        if (response.choicesJson != null)
             pendingChoices[response.civName] = response.choicesJson
-        }
 
         val allHumans = worldScreen.gameInfo.civilizations
             .filter { it.isAlive() && it.playerType == PlayerType.Human }
@@ -1164,9 +1057,8 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
         debug("Player %s ended turn (%d/%d)", response.civName,
             finishedPlayers.size, allHumans.size)
 
-        if (allHumans.all { it in finishedPlayers }) {
+        if (allHumans.all { it in finishedPlayers })
             hostAdvanceTurn()
-        }
     }
 
     /** Host: run turn advancement, upload, and broadcast */
@@ -1208,9 +1100,7 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
                         val tile = gameClone.tileMap.tileList.firstOrNull {
                             it.position.x == x && it.position.y == y
                         } ?: continue
-                        // Only queue if not already queued or completed (race guard: real-time
-                        // broadcast from applyRemoteStartImprovement may not have arrived
-                        // on the clone yet)
+                        // Only queue if not already queued or completed
                         if (tile.improvementInProgress != improvement) {
                             val improvementObj = tile.ruleset.tileImprovements[improvement]
                             if (improvementObj != null) {
@@ -1257,7 +1147,7 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
 
     /** Called when TurnAdvanced is received — non-host clients download the new game */
     private fun onTurnAdvanced(response: Response.TurnAdvanced) {
-        if (isHost()) return  // host already loaded it
+        if (isHost()) return // host already loaded it
         debug("Turn advanced to %s, downloading new game state", response.newTurns)
         Concurrency.runOnNonDaemonThreadPool("SimultaneousDownloadGame") {
             UncivGame.Current.onlineMultiplayer.downloadGame(response.gameId)
