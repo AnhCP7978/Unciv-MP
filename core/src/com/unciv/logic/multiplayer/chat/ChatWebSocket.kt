@@ -196,6 +196,8 @@ object ChatWebSocket {
 
     @OptIn(ExperimentalTime::class)
     private fun handleWebSocketThrowables(t: Throwable) {
+        if (t is ChatStopException || t is ChatRestartException) return
+
         print("ChatError: ${t.message}. Reconnecting...")
 
         if (reconnectionAttempts == 0) {
@@ -291,6 +293,7 @@ object ChatWebSocket {
         if (!isStarted) return
         if (dueToError) {
             if (++reconnectionAttempts > MAX_RECONNECTION_ATTEMPTS) {
+                println("ChatLog: Max reconnection attempts (${MAX_RECONNECTION_ATTEMPTS}) reached. Giving up.")
                 return
             }
         } else resetExponentialBackoff()

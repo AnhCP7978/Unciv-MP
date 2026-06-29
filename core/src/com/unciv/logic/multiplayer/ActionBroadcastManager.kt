@@ -22,6 +22,7 @@ import com.unciv.utils.debug
 import com.unciv.models.ruleset.INonPerpetualConstruction
 import com.unciv.ui.screens.worldscreen.bottombar.BattleTableHelpers.battleAnimationDeferred
 import kotlinx.serialization.json.Json
+import kotlin.math.roundToInt
 import kotlin.uuid.ExperimentalUuidApi
 import kotlin.uuid.Uuid
 
@@ -339,7 +340,7 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
 
     /** Called when the local player clicks "End Turn" */
     fun sendEndTurn(civName: String) {
-        if (hasEndedTurn) return  // prevent double-submit
+        if (hasEndedTurn) return    // prevent double-submit
         hasEndedTurn = true
 
         // Host tracks itself immediately instead of waiting for server echo
@@ -1207,10 +1208,24 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
                         val tile = gameClone.tileMap.tileList.firstOrNull {
                             it.position.x == x && it.position.y == y
                         } ?: continue
-                        // Only queue if not already queued or completed
+                        // Only queue if not already queued or completed (race guard: real-time
+                        // broadcast from applyRemoteStartImprovement may not have arrived
+                        // on the clone yet)
                         if (tile.improvementInProgress != improvement) {
-                            val turns = tile.ruleset.tileImprovements[improvement]?.turnsToBuild ?: 1
-                            tile.queueImprovement(improvement, turns)
+                            val improvementObj = tile.ruleset.tileImprovements[improvement]
+                            if (improvementObj != null) {
+                                // Try full calculation using the worker on this tile
+                                val worker = tile.civilianUnit
+                                if (worker != null && worker.civ.civName == civ.civName) {
+                                    tile.queueImprovement(improvementObj, civ, worker)
+                                } else {
+                                    // Fallback: raw turns * game speed modifier
+                                    val base = improvementObj.turnsToBuild
+                                    val adjusted = if (base <= 0) 1
+                                    else (gameClone.speed.improvementBuildLengthModifier * base).roundToInt().coerceAtLeast(1)
+                                    tile.queueImprovement(improvement, adjusted)
+                                }
+                            } else tile.queueImprovement(improvement, 1)
                         }
                     }
                 } catch (e: Exception) {
