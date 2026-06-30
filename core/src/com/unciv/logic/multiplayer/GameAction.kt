@@ -141,7 +141,68 @@ sealed class GameAction {
         val beliefName: String,
         override val civName: String,
     ) : GameAction()
+
+    // ──────────────────────────────────────
+    //  Trade / Diplomacy actions
+    // ──────────────────────────────────────
+
+    @Serializable
+    @SerialName("sendTradeRequest")
+    data class SendTradeRequestAction(
+        val requestingCiv: String,
+        val targetCiv: String,
+        val trade: TradeData,
+    ) : GameAction() {
+        override val civName: String get() = requestingCiv
+    }
+
+    @Serializable
+    @SerialName("retractTradeRequest")
+    data class RetractTradeRequestAction(
+        val requestingCiv: String,
+        val targetCiv: String,
+    ) : GameAction() {
+        override val civName: String get() = requestingCiv
+    }
+
+    @Serializable
+    @SerialName("acceptTrade")
+    data class AcceptTradeAction(
+        val acceptingCiv: String,
+        val requestingCiv: String,
+        val trade: TradeData,
+    ) : GameAction() {
+        override val civName: String get() = acceptingCiv
+    }
+
+    @Serializable
+    @SerialName("declineTradeRequest")
+    data class DeclineTradeRequestAction(
+        val decliningCiv: String,
+        val requestingCiv: String,
+        val trade: TradeData,
+    ) : GameAction() {
+        override val civName: String get() = decliningCiv
+    }
 }
+
+// ──────────────────────────────────────
+//  Serializable trade data classes
+// ──────────────────────────────────────
+
+@Serializable
+data class TradeOfferData(
+    val name: String,
+    val type: String, // TradeOfferType.name
+    val amount: Int = 1,
+    val duration: Int,
+)
+
+@Serializable
+data class TradeData(
+    val theirOffers: List<TradeOfferData> = emptyList(),
+    val ourOffers: List<TradeOfferData> = emptyList(),
+)
 
 /**
  * Wrapper sent over the wire so the recipient knows which game this belongs to.

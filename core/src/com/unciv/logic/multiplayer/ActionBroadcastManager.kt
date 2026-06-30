@@ -23,8 +23,31 @@ import com.unciv.models.ruleset.INonPerpetualConstruction
 import com.unciv.logic.civilization.managers.ReligionState
 import com.unciv.models.ruleset.Belief
 import com.unciv.ui.screens.worldscreen.bottombar.BattleTableHelpers.battleAnimationDeferred
+import com.unciv.logic.trade.Trade
+import com.unciv.logic.trade.TradeOffer
+import com.unciv.logic.trade.TradeOfferType
+import com.unciv.logic.trade.TradeLogic
+import com.unciv.logic.trade.TradeRequest
 import kotlinx.serialization.json.Json
 import kotlin.math.roundToInt
+
+// ──────────────────────────────────────
+//  Trade data ↔ domain object conversion
+// ──────────────────────────────────────
+
+private fun TradeOffer.toTradeOfferData() = TradeOfferData(name, type.name, amount, duration)
+private fun TradeOfferData.toTradeOffer() = TradeOffer(name, TradeOfferType.valueOf(type), amount, duration)
+
+private fun Trade.toTradeData() = TradeData(
+    theirOffers.map { it.toTradeOfferData() },
+    ourOffers.map { it.toTradeOfferData() }
+)
+private fun TradeData.toTrade(): Trade {
+    val t = Trade()
+    t.theirOffers.addAll(theirOffers.map { it.toTradeOffer() })
+    t.ourOffers.addAll(ourOffers.map { it.toTradeOffer() })
+    return t
+}
 
 /**
  * Orchestrates the 2-phase broadcast protocol for simultaneous multiplayer:
@@ -83,6 +106,10 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
             is GameAction.AdoptPolicyAction -> applyRemoteAdoptPolicy(action)
             is GameAction.DisbandUnitAction -> applyRemoteDisbandUnit(action)
             is GameAction.FoundPantheonAction -> applyRemoteFoundPantheon(action)
+            is GameAction.SendTradeRequestAction -> applyRemoteSendTradeRequest(action)
+            is GameAction.RetractTradeRequestAction -> applyRemoteRetractTradeRequest(action)
+            is GameAction.AcceptTradeAction -> applyRemoteAcceptTrade(action)
+            is GameAction.DeclineTradeRequestAction -> applyRemoteDeclineTradeRequest(action)
             else -> {}
         }
     }
@@ -130,6 +157,18 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
         constructionName: String, cityId: String, queuePosition: Int = -1,
         stat: String, tileX: Int? = null, tileY: Int? = null, civName: String,
     ) = sendGameAction(GameAction.PurchaseAction(constructionName, cityId, queuePosition, stat, tileX, tileY, civName))
+
+    fun sendSendTradeRequestAction(trade: Trade, targetCiv: String, civName: String) =
+        sendGameAction(GameAction.SendTradeRequestAction(civName, targetCiv, trade.toTradeData()))
+
+    fun sendRetractTradeRequestAction(targetCiv: String, civName: String) =
+        sendGameAction(GameAction.RetractTradeRequestAction(civName, targetCiv))
+
+    fun sendAcceptTradeAction(trade: Trade, requestingCiv: String, civName: String) =
+        sendGameAction(GameAction.AcceptTradeAction(civName, requestingCiv, trade.toTradeData()))
+
+    fun sendDeclineTradeRequestAction(trade: Trade, requestingCiv: String, civName: String) =
+        sendGameAction(GameAction.DeclineTradeRequestAction(civName, requestingCiv, trade.toTradeData()))
 
     init {
         // Register as the action response handler in ChatStore
@@ -360,6 +399,42 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
                 debug("Applying remote found pantheon: %s for %s",
                     action.beliefName, action.civName)
                 applyRemoteFoundPantheon(action)
+            }
+            is GameAction.SendTradeRequestAction -> {
+                if (!packet.validated) {
+                    if (isHost()) hostValidateSendTradeRequest(packet)
+                    return
+                }
+                debug("Applying remote send trade request: %s -> %s",
+                    action.requestingCiv, action.targetCiv)
+                applyRemoteSendTradeRequest(action)
+            }
+            is GameAction.RetractTradeRequestAction -> {
+                if (!packet.validated) {
+                    if (isHost()) hostValidateRetractTradeRequest(packet)
+                    return
+                }
+                debug("Applying remote retract trade request: %s -> %s",
+                    action.requestingCiv, action.targetCiv)
+                applyRemoteRetractTradeRequest(action)
+            }
+            is GameAction.AcceptTradeAction -> {
+                if (!packet.validated) {
+                    if (isHost()) hostValidateAcceptTrade(packet)
+                    return
+                }
+                debug("Applying remote accept trade: %s accepts from %s",
+                    action.acceptingCiv, action.requestingCiv)
+                applyRemoteAcceptTrade(action)
+            }
+            is GameAction.DeclineTradeRequestAction -> {
+                if (!packet.validated) {
+                    if (isHost()) hostValidateDeclineTradeRequest(packet)
+                    return
+                }
+                debug("Applying remote decline trade request: %s declines %s",
+                    action.decliningCiv, action.requestingCiv)
+                applyRemoteDeclineTradeRequest(action)
             }
             else -> {}
         }
@@ -733,12 +808,8 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
      *  Does NOT apply — application happens in [applyRemotePromote] when validated=true echo arrives. */
     private fun hostValidatePromote(envelope: GameActionPacket) {
         val action = envelope.action as? GameAction.PromoteAction ?: return
-        val tileMap = worldScreen.gameInfo.tileMap
-        val unit = tileMap.tileList.asSequence()
-            .flatMap { it.getUnits().asSequence() }
-            .firstOrNull { it.id == action.unitId && it.civ.civName == action.civName } ?: return
-        if (unit.isDestroyed) return
-        if (unit.promotions.getAvailablePromotions().none { it.name == action.promotionName }) return
+        // Apply on authoritative state — host never receives the validated echo
+        if (!performPromoteAction(action)) return
         // Valid — echo for all clients to apply once via applyRemotePromote
         val validatedEnvelope = envelope.copy(validated = true)
         ChatWebSocket.requestMessageSend(
@@ -772,6 +843,9 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
             return
         }
 
+        // Apply on authoritative state — host never receives the validated echo
+        applyRemotePurchase(action)
+
         val validatedEnvelope = envelope.copy(validated = true)
         ChatWebSocket.requestMessageSend(
             com.unciv.logic.multiplayer.chat.Message.GameActionRelay(validatedEnvelope)
@@ -802,6 +876,8 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
             .flatMap { it.getUnits().asSequence() }
             .firstOrNull { it.id == action.unitId && it.civ.civName == action.civName } ?: return
         if (unit.isDestroyed) return
+        // Apply on authoritative state — host never receives the validated echo
+        applyRemoteFortify(action)
         // Valid
         val validatedEnvelope = envelope.copy(validated = true)
         ChatWebSocket.requestMessageSend(
@@ -837,6 +913,8 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
         if (!unit.hasMovement()) return
         val tile = unit.currentTile
         if (!tile.canPillageTile() || tile.getImprovementToPillageName() == null) return
+        // Apply on authoritative state — host never receives the validated echo
+        applyRemotePillage(action)
         // Valid
         val validatedEnvelope = envelope.copy(validated = true)
         ChatWebSocket.requestMessageSend(
@@ -898,6 +976,8 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
         val civ = worldScreen.gameInfo.civilizations.firstOrNull { it.civName == action.civName } ?: return
         val policy = worldScreen.gameInfo.ruleset.policies[action.policyName] ?: return
         if (!civ.policies.isAdoptable(policy)) return
+        // Apply on authoritative state — host never receives the validated echo
+        applyRemoteAdoptPolicy(action)
         // Valid — echo for all clients to apply once via applyRemoteAdoptPolicy
         val validatedEnvelope = envelope.copy(validated = true)
         ChatWebSocket.requestMessageSend(
@@ -923,6 +1003,8 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
         val civ = worldScreen.gameInfo.civilizations.firstOrNull { it.civName == action.civName } ?: return
         val belief = worldScreen.gameInfo.ruleset.beliefs[action.beliefName] ?: return
         if (civ.religionManager.religionState >= ReligionState.Pantheon) return
+        // Apply on authoritative state — host never receives the validated echo
+        applyRemoteFoundPantheon(action)
         // Valid — echo for all clients to apply via applyRemoteFoundPantheon
         val validatedEnvelope = envelope.copy(validated = true)
         ChatWebSocket.requestMessageSend(
@@ -947,6 +1029,8 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
         val civ = worldScreen.gameInfo.civilizations.firstOrNull { it.civName == action.civName } ?: return
         val unit = civ.units.getCivUnits().firstOrNull { it.id == action.unitId } ?: return
         if (unit.isDestroyed) return
+        // Apply on authoritative state — host never receives the validated echo
+        applyRemoteDisbandUnit(action)
         // Valid — echo for all clients to apply
         val validatedEnvelope = envelope.copy(validated = true)
         ChatWebSocket.requestMessageSend(
@@ -960,6 +1044,83 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
         if (unit.isDestroyed) return
         unit.disband()
         civ.updateStatsForNextTurn()
+        Gdx.app.postRunnable { worldScreen.shouldUpdate = true }
+    }
+
+    // ──────────────────────────────────────
+    //  Trade / Diplomacy
+    // ──────────────────────────────────────
+
+    private fun hostValidateSendTradeRequest(envelope: GameActionPacket) {
+        val action = envelope.action as? GameAction.SendTradeRequestAction ?: return
+        // Apply on authoritative state — host never receives the validated echo
+        applyRemoteSendTradeRequest(action)
+        val validatedEnvelope = envelope.copy(validated = true)
+        ChatWebSocket.requestMessageSend(
+            com.unciv.logic.multiplayer.chat.Message.GameActionRelay(validatedEnvelope)
+        )
+    }
+
+    private fun applyRemoteSendTradeRequest(action: GameAction.SendTradeRequestAction) {
+        val targetCiv = worldScreen.gameInfo.civilizations.firstOrNull { it.civName == action.targetCiv } ?: return
+        // Replace any existing trade request from the same requesting civ
+        targetCiv.tradeRequests.removeAll { it.requestingCiv == action.requestingCiv }
+        targetCiv.tradeRequests.add(
+            com.unciv.logic.trade.TradeRequest(action.requestingCiv, action.trade.toTrade())
+        )
+    }
+
+    private fun hostValidateRetractTradeRequest(envelope: GameActionPacket) {
+        val action = envelope.action as? GameAction.RetractTradeRequestAction ?: return
+        applyRemoteRetractTradeRequest(action)
+        val validatedEnvelope = envelope.copy(validated = true)
+        ChatWebSocket.requestMessageSend(
+            com.unciv.logic.multiplayer.chat.Message.GameActionRelay(validatedEnvelope)
+        )
+    }
+
+    private fun applyRemoteRetractTradeRequest(action: GameAction.RetractTradeRequestAction) {
+        val targetCiv = worldScreen.gameInfo.civilizations.firstOrNull { it.civName == action.targetCiv } ?: return
+        targetCiv.tradeRequests.removeAll { it.requestingCiv == action.requestingCiv }
+    }
+
+    private fun hostValidateAcceptTrade(envelope: GameActionPacket) {
+        val action = envelope.action as? GameAction.AcceptTradeAction ?: return
+        applyRemoteAcceptTrade(action)
+        val validatedEnvelope = envelope.copy(validated = true)
+        ChatWebSocket.requestMessageSend(
+            com.unciv.logic.multiplayer.chat.Message.GameActionRelay(validatedEnvelope)
+        )
+    }
+
+    private fun applyRemoteAcceptTrade(action: GameAction.AcceptTradeAction) {
+        val acceptingCiv = worldScreen.gameInfo.civilizations.firstOrNull { it.civName == action.acceptingCiv } ?: return
+        val requestingCiv = worldScreen.gameInfo.civilizations.firstOrNull { it.civName == action.requestingCiv } ?: return
+        val trade = action.trade.toTrade()
+        val tradeLogic = TradeLogic(acceptingCiv, requestingCiv)
+        tradeLogic.currentTrade.set(trade)
+        tradeLogic.acceptTrade()
+        acceptingCiv.tradeRequests.removeAll { it.requestingCiv == action.requestingCiv }
+        Gdx.app.postRunnable { worldScreen.shouldUpdate = true }
+    }
+
+    private fun hostValidateDeclineTradeRequest(envelope: GameActionPacket) {
+        val action = envelope.action as? GameAction.DeclineTradeRequestAction ?: return
+        applyRemoteDeclineTradeRequest(action)
+        val validatedEnvelope = envelope.copy(validated = true)
+        ChatWebSocket.requestMessageSend(
+            com.unciv.logic.multiplayer.chat.Message.GameActionRelay(validatedEnvelope)
+        )
+    }
+
+    private fun applyRemoteDeclineTradeRequest(action: GameAction.DeclineTradeRequestAction) {
+        val decliningCiv = worldScreen.gameInfo.civilizations.firstOrNull { it.civName == action.decliningCiv } ?: return
+        val trade = action.trade.toTrade()
+        val tradeRequest = decliningCiv.tradeRequests.firstOrNull {
+            it.requestingCiv == action.requestingCiv && it.trade.equalTrade(trade)
+        }
+        tradeRequest?.decline(decliningCiv)
+        decliningCiv.tradeRequests.removeAll { it.requestingCiv == action.requestingCiv }
         Gdx.app.postRunnable { worldScreen.shouldUpdate = true }
     }
 

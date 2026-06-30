@@ -28,8 +28,13 @@ class TradeTable(
     private fun isTradeOffered() = otherCivilization.tradeRequests.any { it.requestingCiv == civ.civID }
 
     private fun retractOffer() {
-        otherCivilization.tradeRequests.removeAll { it.requestingCiv == civ.civID }
-        civ.cache.updateCivResources()
+        if (civ.gameInfo.gameParameters.isSimultaneousGame) {
+            com.unciv.UncivGame.Current.worldScreen?.actionBroadcastManager
+                ?.sendRetractTradeRequestAction(otherCivilization.civName, civ.civName)
+        } else {
+            otherCivilization.tradeRequests.removeAll { it.requestingCiv == civ.civID }
+            civ.cache.updateCivResources()
+        }
         offerButton.setText(offerTradeText.tr())
     }
 
@@ -74,7 +79,14 @@ class TradeTable(
                 }
             }
 
-            otherCivilization.tradeRequests.add(TradeRequest(civ.civID, tradeLogic.currentTrade.reverse()))
+            if (civ.gameInfo.gameParameters.isSimultaneousGame) {
+                com.unciv.UncivGame.Current.worldScreen?.actionBroadcastManager
+                    ?.sendSendTradeRequestAction(
+                        tradeLogic.currentTrade.reverse(), otherCivilization.civName, civ.civName
+                    )
+            } else {
+                otherCivilization.tradeRequests.add(TradeRequest(civ.civID, tradeLogic.currentTrade.reverse()))
+            }
             civ.cache.updateCivResources()
             offerButton.setText("Retract offer".tr())
         }
