@@ -138,6 +138,13 @@ sealed class GameAction {
         val unitId: Int,
         override val civName: String,
     ) : GameAction()
+
+    @Serializable
+    @SerialName("foundPantheon")
+    data class FoundPantheonAction(
+        val beliefName: String,
+        override val civName: String,
+    ) : GameAction()
 }
 
 /**

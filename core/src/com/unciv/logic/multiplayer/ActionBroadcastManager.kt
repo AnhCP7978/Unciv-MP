@@ -20,6 +20,8 @@ import com.unciv.ui.screens.worldscreen.WorldScreen
 import com.unciv.utils.Concurrency
 import com.unciv.utils.debug
 import com.unciv.models.ruleset.INonPerpetualConstruction
+import com.unciv.logic.civilization.managers.ReligionState
+import com.unciv.models.ruleset.Belief
 import com.unciv.ui.screens.worldscreen.bottombar.BattleTableHelpers.battleAnimationDeferred
 import kotlinx.serialization.json.Json
 import kotlin.math.roundToInt
@@ -256,6 +258,19 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
         )
     }
 
+    fun sendFoundPantheonAction(beliefName: String, civName: String) {
+        val envelope = GameActionEnvelope(
+            gameId = gameId,
+            action = GameAction.FoundPantheonAction(
+                beliefName = beliefName, civName = civName,
+            ),
+            validated = isHost(),
+        )
+        ChatWebSocket.requestMessageSend(
+            com.unciv.logic.multiplayer.chat.Message.GameActionRelay(envelope)
+        )
+    }
+
     fun sendPurchaseAction(
         constructionName: String,
         cityId: String,
@@ -285,19 +300,17 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
 
     /** Called when the local player clicks "End Turn" */
     fun sendEndTurn(civName: String) {
-        if (hasEndedTurn) return    // prevent double-submit
+        if (hasEndedTurn) return // prevent double-submit
         hasEndedTurn = true
 
+        var choicesJson: String? = null
         // Host tracks itself immediately instead of waiting for server echo
         if (isHost()) {
             worldScreen.gameInfo.simultaneousTurnState.playersFinishedTurn.add(civName)
-            debug("Host %s ended turn (%d/?)", civName,
-                worldScreen.gameInfo.simultaneousTurnState.playersFinishedTurn.size)
+            debug("Host %s ended turn (%d/?)", civName, worldScreen.gameInfo.simultaneousTurnState.playersFinishedTurn.size)
         }
-
-        // Gather civ choices for batch sync
-        val choicesJson = if (!isHost()) {
-            try {
+        else { // Gather civ choices for batch sync
+            choicesJson = try {
                 val civ = worldScreen.gameInfo.civilizations.first { it.civName == civName }
                 val cityConstructions = civ.cities.associate { it.id to it.cityConstructions.currentConstructionName() }
                 val techResearch = civ.tech.techsToResearch.firstOrNull()
@@ -315,7 +328,7 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
                 )
                 Json.encodeToString(choices)
             } catch (_: Exception) { null }
-        } else null
+        }
 
         ChatWebSocket.requestMessageSend(
             com.unciv.logic.multiplayer.chat.Message.EndTurn(gameId, civName, choicesJson)
@@ -444,6 +457,15 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
                 debug("Applying remote disband: unit %s for %s",
                     action.unitId, action.civName)
                 applyRemoteDisbandUnit(action)
+            }
+            is GameAction.FoundPantheonAction -> {
+                if (!envelope.validated) {
+                    if (isHost()) hostValidateFoundPantheon(envelope)
+                    return
+                }
+                debug("Applying remote found pantheon: %s for %s",
+                    action.beliefName, action.civName)
+                applyRemoteFoundPantheon(action)
             }
             else -> {}
         }
@@ -995,6 +1017,30 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
         if (civ.policies.isAdopted(policy.name)) return
         civ.policies.adopt(policy)
         civ.policies.shouldOpenPolicyPicker = false
+        Gdx.app.postRunnable { worldScreen.shouldUpdate = true }
+    }
+
+    // ──────────────────────────────────────
+    //  Pantheon founding
+    // ──────────────────────────────────────
+
+    private fun hostValidateFoundPantheon(envelope: GameActionEnvelope) {
+        val action = envelope.action as? GameAction.FoundPantheonAction ?: return
+        val civ = worldScreen.gameInfo.civilizations.firstOrNull { it.civName == action.civName } ?: return
+        val belief = worldScreen.gameInfo.ruleset.beliefs[action.beliefName] ?: return
+        if (civ.religionManager.religionState >= ReligionState.Pantheon) return
+        // Valid — echo for all clients to apply via applyRemoteFoundPantheon
+        val validatedEnvelope = envelope.copy(validated = true)
+        ChatWebSocket.requestMessageSend(
+            com.unciv.logic.multiplayer.chat.Message.GameActionRelay(validatedEnvelope)
+        )
+    }
+
+    private fun applyRemoteFoundPantheon(action: GameAction.FoundPantheonAction) {
+        val civ = worldScreen.gameInfo.civilizations.firstOrNull { it.civName == action.civName } ?: return
+        val belief = worldScreen.gameInfo.ruleset.beliefs[action.beliefName] ?: return
+        if (civ.religionManager.religionState >= ReligionState.Pantheon) return
+        civ.religionManager.chooseBeliefs(listOf(belief), useFreeBeliefs = true)
         Gdx.app.postRunnable { worldScreen.shouldUpdate = true }
     }
 
