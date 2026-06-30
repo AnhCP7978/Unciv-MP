@@ -3,7 +3,7 @@
 package com.unciv.logic.multiplayer.chat
 
 import com.unciv.UncivGame
-import com.unciv.logic.multiplayer.GameActionEnvelope
+import com.unciv.logic.multiplayer.GameActionPacket
 import com.unciv.logic.multiplayer.chat.ChatWebSocket.job
 import com.unciv.logic.multiplayer.chat.ChatWebSocket.start
 import com.unciv.utils.Concurrency
@@ -58,7 +58,13 @@ sealed class Message {
     @Serializable
     @SerialName("gameAction")
     data class GameActionRelay(
-        val envelope: GameActionEnvelope
+        val packet: GameActionPacket
+    ) : Message()
+
+    @Serializable
+    @SerialName("setHost")
+    data class SetHost(
+        val gameId: String,
     ) : Message()
 
     @Serializable
@@ -99,7 +105,14 @@ sealed class Response {
     @Serializable
     @SerialName("gameAction")
     data class GameActionRelay(
-        val envelope: GameActionEnvelope
+        val packet: GameActionPacket
+    ) : Response()
+
+    @Serializable
+    @SerialName("hostSet")
+    data class HostSet(
+        val gameId: String,
+        val hostUserId: String,
     ) : Response()
 
     @Serializable
@@ -251,6 +264,7 @@ object ChatWebSocket {
                         // Simultaneous mode action relay — forward to ActionBroadcastManager
                         is Response.GameActionRelay,
                         is Response.GameActionRejected,
+                        is Response.HostSet,
                         is Response.PlayerEndedTurn,
                         is Response.TurnAdvanced -> {
                             ChatStore.onActionResponse?.invoke(response)

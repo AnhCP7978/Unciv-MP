@@ -48,10 +48,7 @@ data class IsAliveInfo(val authVersion: Int, val chatVersion: Int)
 
 /** Minimal relay container — server doesn't deserialize the action payload */
 @Serializable
-data class TilePosition(val x: Int, val y: Int)
-
-@Serializable
-data class GameActionEnvelope(
+data class GameActionPacket(
     val gameId: String,
     val validated: Boolean = false,
     /** Raw action payload — server doesn't deserialize it, just passes through */
@@ -81,7 +78,13 @@ sealed class Message {
     @Serializable
     @SerialName("gameAction")
     data class GameActionRelay(
-        val envelope: GameActionEnvelope
+        val packet: GameActionPacket
+    ) : Message()
+
+    @Serializable
+    @SerialName("setHost")
+    data class SetHost(
+        val gameId: String,
     ) : Message()
 
     @Serializable
@@ -122,12 +125,19 @@ sealed class Response {
     @Serializable
     @SerialName("gameAction")
     data class GameActionRelay(
-        val envelope: GameActionEnvelope
+        val packet: GameActionPacket
     ) : Response()
 
     @Serializable
     @SerialName("gameActionRejected")
     data class GameActionRejected(val reason: String) : Response()
+
+    @Serializable
+    @SerialName("hostSet")
+    data class HostSet(
+        val gameId: String,
+        val hostUserId: String,
+    ) : Response()
 
     @Serializable
     @SerialName("playerEndedTurn")
@@ -148,6 +158,8 @@ sealed class Response {
 private class WebSocketSessionManager {
     private val gameId2WSSessions = synchronizedMap(mutableMapOf<Uuid, MutableSet<DefaultWebSocketServerSession>>())
     private val wsSession2GameIds = synchronizedMap(mutableMapOf<DefaultWebSocketServerSession, MutableSet<Uuid>>())
+    /** Track which session is the host per game */
+    val hostByGame = synchronizedMap(mutableMapOf<Uuid, DefaultWebSocketServerSession>())
 
     fun isSubscribed(session: DefaultWebSocketServerSession, gameId: Uuid): Boolean =
         gameId2WSSessions.getOrPut(gameId) { synchronizedSet(mutableSetOf()) }.contains(session)
@@ -168,6 +180,8 @@ private class WebSocketSessionManager {
         wsSession2GameIds[session]?.removeAll(uuids)
         for (uuid in uuids) {
             gameId2WSSessions[uuid]?.remove(session)
+            // If this was the host, clear it
+            if (hostByGame[uuid] == session) hostByGame.remove(uuid)
         }
     }
 
@@ -182,7 +196,29 @@ private class WebSocketSessionManager {
         }
     }
 
+    /** Publish only to the host session for this game */
+    suspend fun publishToHost(gameId: Uuid, message: Response) {
+        val host = hostByGame[gameId] ?: return
+        if (host.isActive) host.sendSerialized(message)
+    }
+
+    /** Publish to all subscribers except the host (for validated echoes) */
+    suspend fun publishToNonHosts(gameId: Uuid, message: Response) {
+        val host = hostByGame[gameId]
+        val sessions = gameId2WSSessions.getOrPut(gameId) { synchronizedSet(mutableSetOf()) }
+        for (session in sessions) {
+            if (session == host) continue // host already applied locally
+            if (!session.isActive) {
+                sessions.remove(session)
+                continue
+            }
+            session.sendSerialized(message)
+        }
+    }
+
     fun cleanupSession(session: DefaultWebSocketServerSession) {
+        // Clean up host mapping
+        hostByGame.entries.removeAll { it.value == session }
         for (gameId in wsSession2GameIds.remove(session) ?: emptyList()) {
             val gameIds = gameId2WSSessions[gameId] ?: continue
             gameIds.remove(session)
@@ -330,7 +366,7 @@ private class UncivServerRunner : CliktCommand() {
                     // DO NOT OMIT
                     // if omitted the "type" field will be missing from all outgoing messages
                     classDiscriminatorMode = ClassDiscriminatorMode.ALL_JSON_OBJECTS
-                    ignoreUnknownKeys = true  // server relays GameActionEnvelope without parsing 'action'
+                    ignoreUnknownKeys = true  // server relays GameActionPacket without parsing 'action'
                 })
             }
 
@@ -487,14 +523,36 @@ private class UncivServerRunner : CliktCommand() {
 
                                     is Message.Leave -> wsSessionManager.unsubscribe(this, message.gameIds)
 
-                                    // Simultaneous mode: relay GameAction messages to all game subscribers
+                                    // Simultaneous mode: route game actions to host or broadcast
                                     is Message.GameActionRelay -> {
-                                        val gameId = message.envelope.gameId.toUuidOrNull()
+                                        val gameId = message.packet.gameId.toUuidOrNull()
                                         if (gameId == null) {
                                             sendSerialized(Response.Error("Invalid gameId in GameAction!"))
                                             continue
                                         }
-                                        wsSessionManager.publish(gameId, Response.GameActionRelay(message.envelope))
+
+                                        if (message.packet.validated) {
+                                            // Host-sent action — broadcast to all non-hosts
+                                            wsSessionManager.hostByGame[gameId] = this
+                                            wsSessionManager.publishToNonHosts(gameId, Response.GameActionRelay(message.packet))
+                                        } else {
+                                            // Non-host action — relay to host for validation
+                                            wsSessionManager.publishToHost(gameId, Response.GameActionRelay(message.packet))
+                                        }
+                                    }
+
+                                    is Message.SetHost -> {
+                                        val gameId = message.gameId.toUuidOrNull()
+                                        if (gameId == null) {
+                                            sendSerialized(Response.Error("Invalid gameId in SetHost!"))
+                                            continue
+                                        }
+                                        wsSessionManager.hostByGame[gameId] = this
+                                        // Notify all subscribers of new host
+                                        wsSessionManager.publish(gameId, Response.HostSet(
+                                            gameId = message.gameId,
+                                            hostUserId = "",
+                                        ))
                                     }
 
                                     is Message.EndTurn -> {

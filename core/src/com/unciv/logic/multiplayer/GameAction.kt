@@ -4,12 +4,6 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 /**
- * Serializable stand-in for tile coordinates (Vector2 is not serializable).
- */
-@Serializable
-data class TilePosition(val x: Int, val y: Int)
-
-/**
  * Actions a player can perform in simultaneous multiplayer mode.
  * Sent from client → host via WebSocket, then relayed by host → all.
  */
@@ -21,8 +15,10 @@ sealed class GameAction {
     @SerialName("move")
     data class MoveAction(
         val unitId: Int,
-        val from: TilePosition,
-        val to: TilePosition,
+        val fromX: Int,
+        val fromY: Int,
+        val toX: Int,
+        val toY: Int,
         override val civName: String,
     ) : GameAction()
 
@@ -149,13 +145,8 @@ sealed class GameAction {
 
 /**
  * Wrapper sent over the wire so the recipient knows which game this belongs to.
- *
- * @param validated When `false`, this is a raw action from a non-host client.
- *                  When `true`, the host has validated this action — apply it.
- */
+ * Non-host send packet (validated=false) to server -> relay to host
+ * Host send packet (validated=true) -> broadcast to all except host
+*/
 @Serializable
-data class GameActionEnvelope(
-    val gameId: String,
-    val action: GameAction,
-    val validated: Boolean = false,
-)
+data class GameActionPacket(val gameId: String, val action: GameAction, val validated: Boolean = false)
