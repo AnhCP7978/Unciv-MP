@@ -10,6 +10,7 @@ import com.unciv.logic.automation.Automation
 import com.unciv.logic.city.City
 import com.unciv.logic.civilization.Civilization
 import com.unciv.logic.map.tile.Tile
+import com.unciv.logic.multiplayer.SimultaneousModeInterceptor
 import com.unciv.models.TutorialTrigger
 import com.unciv.models.UncivSound
 import com.unciv.models.ruleset.Building
@@ -444,13 +445,19 @@ class CityScreen(
             true,
             restoreDefault = { update() }
         ) {
+            // Simultaneous multiplayer: route through host-authoritative broadcast
+            if (SimultaneousModeInterceptor.interceptBuyTile(
+                    GUI.getWorldScreen(),
+                    city.id,
+                    selectedTile.position.x,
+                    selectedTile.position.y,
+                    city.civ.civName
+                )) return@ConfirmPopup
             SoundPlayer.play(UncivSound.Coin)
             city.expansion.buyTile(selectedTile)
-            // preselect the next tile on city screen rebuild so bulk buying can go faster
             UncivGame.Current.replaceCurrentScreen(CityScreen(city, initSelectedTile = city.expansion.chooseNewTileToOwn()))
         }.open()
     }
-
 
     private fun tileWorkedIconDoubleClick(tileGroup: CityTileGroup, city: City) {
         if (!canChangeState || city.isPuppet || tileGroup.tileState != CityTileState.WORKABLE) return

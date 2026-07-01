@@ -7,18 +7,14 @@ import com.unciv.models.UnitActionType
 import com.unciv.models.UpgradeUnitAction
 import com.unciv.ui.screens.worldscreen.WorldScreen
 
-/**
- * Lightweight hook that intercepts unit actions in simultaneous multiplayer mode.
+/** Lightweight hook that intercepts unit actions in simultaneous multiplayer mode.
  * Non-host players have their actions routed through the [ActionBroadcastManager]
  * instead of executing locally.
  *
- * The host applies actions immediately and broadcasts the result.
- */
+ * The host applies actions immediately and broadcasts the result. */
 object SimultaneousModeInterceptor {
-    /**
-     * Called before a unit move is executed locally.
-     * @return true if the action was intercepted (broadcast mode) — caller should skip local execution
-     */
+    /** Called before a unit move is executed locally.
+     * @return true if the action was intercepted (broadcast mode) — caller should skip local execution */
     fun interceptMove(
         worldScreen: WorldScreen,
         unit: MapUnit,
@@ -28,28 +24,27 @@ object SimultaneousModeInterceptor {
         if (!gameInfo.gameParameters.isSimultaneousGame) return false
 
         val broadcastManager = worldScreen.actionBroadcastManager ?: return false
-        val fromPos = unit.currentTile.position
+        // Calculate the reachable tile this turn instead of sending the final far-away destination
+        val tileToMoveTo = try {
+            unit.movement.getTileToMoveToThisTurn(targetTile)
+        } catch (_: Exception) {
+            return false // Cancel the move if nothing reachable this turn
+        }
 
-        val isNotHost = !broadcastManager.isHost()
-        // Host applies locally AND broadcasts — don't intercept, but still send
-        // Non-host: send pending move and block local execution
         broadcastManager.sendMoveAction(
             unitId = unit.id,
-            fromX = fromPos.x, fromY = fromPos.y,
-            toX = targetTile.position.x, toY = targetTile.position.y,
+            toX = tileToMoveTo.position.x, toY = tileToMoveTo.position.y,
             civName = unit.civ.civName,
         )
-        return isNotHost // Let host execute locally too if it's host
+        return !broadcastManager.isHost() // Let host execute locally
     }
 
-    /**
-     * Intercept a unit action (found city, etc).
+    /** Intercept a unit action (found city, etc).
      * The caller should return the replacement action (wrapped in broadcast)
      * or null to continue with original action.
      *
      * Host: sends validated=true and lets local execution proceed (returns null).
-     * Non-host: sends validated=false and blocks (returns {}).
-     */
+     * Non-host: sends validated=false and blocks (returns {}). */
     fun interceptUnitAction(
         worldScreen: WorldScreen,
         unit: MapUnit,
@@ -64,11 +59,7 @@ object SimultaneousModeInterceptor {
 
         when (action.type) {
             UnitActionType.FoundCity -> {
-                val tile = unit.getTile()
-                broadcastManager.sendFoundCityAction(
-                    unit.id, tile.position.x, tile.position.y, unit.civ.civName
-                )
-                // Block ALL players — apply only via broadcast echo (prevents double-apply crash)
+                broadcastManager.sendFoundCityAction(unit.id, unit.civ.civName)
                 return ({})
             }
             UnitActionType.HurryResearch,
@@ -104,10 +95,8 @@ object SimultaneousModeInterceptor {
         }
     }
 
-    /**
-     * Intercept a purchase action (buying construction in a city).
-     * @return true if the action was intercepted — caller should skip local execution
-     */
+    /** Intercept a purchase action (buying construction in a city).
+     * @return true if the action was intercepted — caller should skip local execution */
     fun interceptPurchase(
         worldScreen: WorldScreen,
         constructionName: String,
@@ -123,14 +112,25 @@ object SimultaneousModeInterceptor {
         val broadcastManager = worldScreen.actionBroadcastManager ?: return false
 
         broadcastManager.sendPurchaseAction(constructionName, cityId, queuePosition, stat, tileX, tileY, civName)
-        // Block local execution for ALL — the broadcast echo (validated=true for host,
-        // or validated=true from host validation for non-host) will apply it once.
         return true
     }
 
-    /**
-     * Intercept a city bombardment action. Both host and non-host block local execution.
-     */
+    /** Intercept a buy-tile action. Both host and non-host block local execution. */
+    fun interceptBuyTile(
+        worldScreen: WorldScreen,
+        cityId: String,
+        tileX: Int,
+        tileY: Int,
+        civName: String,
+    ): Boolean {
+        val gameInfo = worldScreen.gameInfo
+        if (!gameInfo.gameParameters.isSimultaneousGame) return false
+        val broadcastManager = worldScreen.actionBroadcastManager ?: return false
+        broadcastManager.sendBuyTileAction(cityId, tileX, tileY, civName)
+        return true
+    }
+
+    /** Intercept a city bombardment action. Both host and non-host block local execution. */
     fun interceptCityBombard(
         worldScreen: WorldScreen,
         cityId: String,
@@ -147,12 +147,10 @@ object SimultaneousModeInterceptor {
             targetTileY = targetTile.position.y,
             civName = civName,
         )
-        return true  // block local execution
+        return true
     }
 
-    /**
-     * Intercept a declare war action. Returns true if the action was intercepted.
-     */
+    /** Intercept a declare war action. Returns true if the action was intercepted. */
     fun interceptDeclareWar(
         worldScreen: WorldScreen,
         civName: String,
@@ -166,11 +164,7 @@ object SimultaneousModeInterceptor {
         return true
     }
 
-    /**
-     * Intercept an attack action. Both host and non-host block local execution.
-     * The host executes the battle on its authoritative state and echoes validated=true,
-     * then all clients apply it.
-     */
+    /** Intercept an attack action. Both host and non-host block local execution. */
     fun interceptAttack(
         worldScreen: WorldScreen,
         unit: com.unciv.logic.map.mapunit.MapUnit,
@@ -186,6 +180,6 @@ object SimultaneousModeInterceptor {
             targetTileY = targetTile.position.y,
             civName = unit.civ.civName,
         )
-        return true  // block local execution for ALL players, including host
+        return true
     }
 }

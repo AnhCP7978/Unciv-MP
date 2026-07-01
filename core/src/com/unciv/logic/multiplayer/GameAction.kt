@@ -15,8 +15,6 @@ sealed class GameAction {
     @SerialName("move")
     data class MoveAction(
         val unitId: Int,
-        val fromX: Int,
-        val fromY: Int,
         val toX: Int,
         val toY: Int,
         override val civName: String,
@@ -35,6 +33,13 @@ sealed class GameAction {
     @SerialName("foundCity")
     data class FoundCityAction(
         val unitId: Int,
+        override val civName: String,
+    ) : GameAction()
+
+    @Serializable
+    @SerialName("buyTile")
+    data class BuyTileAction(
+        val cityId: String,
         val tileX: Int,
         val tileY: Int,
         override val civName: String,

@@ -132,6 +132,10 @@ class PromotionPickerScreen private constructor(
             return
         }
 
+        // Single player / non-simultaneous: apply locally
+        for (promotionName in promotionNames)
+            unit.promotions.addPromotion(promotionName)
+
         onChange?.invoke()
 
         if (!closeOnPick || unit.promotions.canBePromoted())

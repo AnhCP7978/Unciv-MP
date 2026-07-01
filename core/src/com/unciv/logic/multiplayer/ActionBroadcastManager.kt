@@ -94,6 +94,7 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
         when (action) {
             is GameAction.MoveAction -> applyRemoteMove(action)
             is GameAction.FoundCityAction -> applyRemoteFoundCity(action)
+            is GameAction.BuyTileAction -> applyRemoteBuyTile(action)
             is GameAction.DeclareWarAction -> applyRemoteDeclareWar(action)
             is GameAction.AttackAction -> applyRemoteAttack(action)
             is GameAction.CityBombardAction -> applyRemoteCityBombard(action)
@@ -114,11 +115,14 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
         }
     }
 
-    fun sendMoveAction(unitId: Int, fromX: Int, fromY: Int, toX: Int, toY: Int, civName: String) =
-        sendGameAction(GameAction.MoveAction(unitId, fromX, fromY, toX, toY, civName))
+    fun sendMoveAction(unitId: Int, toX: Int, toY: Int, civName: String) =
+        sendGameAction(GameAction.MoveAction(unitId, toX, toY, civName))
 
-    fun sendFoundCityAction(unitId: Int, tileX: Int, tileY: Int, civName: String) =
-        sendGameAction(GameAction.FoundCityAction(unitId, tileX, tileY, civName))
+    fun sendFoundCityAction(unitId: Int, civName: String) =
+        sendGameAction(GameAction.FoundCityAction(unitId, civName))
+
+    fun sendBuyTileAction(cityId: String, tileX: Int, tileY: Int, civName: String) =
+        sendGameAction(GameAction.BuyTileAction(cityId, tileX, tileY, civName))
 
     fun sendDeclareWarAction(civName: String, otherCivName: String) =
         sendGameAction(GameAction.DeclareWarAction(otherCivName, civName))
@@ -288,9 +292,16 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
                     if (isHost()) hostValidateFoundCity(packet)
                     return
                 }
-                debug("Applying remote found city: unit %s at (%s, %s)",
-                    action.unitId, action.tileX, action.tileY)
+                debug("Applying remote found city: unit %s", action.unitId)
                 applyRemoteFoundCity(action)
+            }
+            is GameAction.BuyTileAction -> {
+                if (!packet.validated) {
+                    if (isHost()) hostValidateBuyTile(packet)
+                    return
+                }
+                debug("Applying remote buy tile: tile (%s,%s)", action.tileX, action.tileY)
+                applyRemoteBuyTile(action)
             }
             is GameAction.DeclareWarAction -> {
                 if (!packet.validated) {
@@ -441,24 +452,20 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
     }
 
     private fun applyRemoteMove(action: GameAction.MoveAction) {
-        // Look up the unit — try destination tile first, then origin
         val tileMap = worldScreen.gameInfo.tileMap
-        val destTile = tileMap[action.toX, action.toY]
-        val originTile = tileMap[action.fromX, action.fromY]
-        val unit = destTile.getUnits().firstOrNull { it.id == action.unitId }
-            ?: originTile.getUnits().firstOrNull { it.id == action.unitId }
-            ?: return
-
+        val civ = worldScreen.gameInfo.civilizations.firstOrNull { it.civName == action.civName }
+        val unit = civ?.units?.getUnitById(action.unitId)
+            ?: run {
+                debug("applyRemoteMove: unit %s not found for civ %s", action.unitId, action.civName)
+                return
+            }
         try {
-            unit.movement.moveToTile(destTile)
+            unit.movement.moveToTile(tileMap[action.toX, action.toY])
         } catch (_: Exception) {
-            // Remote move may fail if terrain/path differs between clients, that's OK
             debug("applyRemoteMove: could not move unit %s to (%s,%s)",
                 action.unitId, action.toX, action.toY)
         }
-        Gdx.app.postRunnable {
-            worldScreen.shouldUpdate = true
-        }
+        Gdx.app.postRunnable { worldScreen.shouldUpdate = true }
     }
 
     /**
@@ -468,14 +475,11 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
      */
     private fun hostValidateMove(envelope: GameActionPacket) {
         val action = envelope.action as? GameAction.MoveAction ?: return
-
-        // Find the unit on the authoritative game state
         val tileMap = worldScreen.gameInfo.tileMap
-        val originTile = tileMap[action.fromX, action.fromY]
-        val unit = originTile.getUnits()
-            .firstOrNull { it.id == action.unitId && it.civ.civName == action.civName }
+        val civ = tileMap.gameInfo.civilizations.firstOrNull { it.civName == action.civName }
+        val unit = civ?.units?.getUnitById(action.unitId)
         if (unit == null || unit.currentMovement <= 0f) {
-            debug("Host rejected move: unit %s invalid or has no movement", action.unitId)
+            debug("Host rejected move: unit %s is invalid or has no movement point left", action.unitId)
             return
         }
 
@@ -494,32 +498,33 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
             com.unciv.logic.multiplayer.chat.Message.GameActionRelay(validatedEnvelope)
         )
 
-        Gdx.app.postRunnable {
-            worldScreen.shouldUpdate = true
-        }
+        Gdx.app.postRunnable { worldScreen.shouldUpdate = true }
     }
 
     private fun applyRemoteFoundCity(action: GameAction.FoundCityAction) {
-        val tileMap = worldScreen.gameInfo.tileMap
-        val tile = tileMap[action.tileX, action.tileY]
+        val unit = worldScreen.gameInfo.civilizations.firstOrNull { it.civName == action.civName }
+            ?.units?.getUnitById(action.unitId) ?: return
+
+        val tile = unit.currentTile
         if (tile.isCityCenter()) return  // already settled (host already applied)
-        val unit = tile.getUnits().firstOrNull { it.id == action.unitId && it.civ.civName == action.civName }
-            ?: return
         unit.civ.addCity(tile.position, unit)
         unit.destroy()
-        Gdx.app.postRunnable {
-            worldScreen.shouldUpdate = true
-        }
+        Gdx.app.postRunnable { worldScreen.shouldUpdate = true }
     }
 
     private fun hostValidateFoundCity(envelope: GameActionPacket) {
         val action = envelope.action as? GameAction.FoundCityAction ?: return
-        val tileMap = worldScreen.gameInfo.tileMap
-        val tile = tileMap[action.tileX, action.tileY]
-        if (tile.isCityCenter()) return  // already settled
-        val unit = tile.getUnits().firstOrNull { it.id == action.unitId && it.civ.civName == action.civName }
-        if (unit == null || !unit.hasMovement() || !tile.canBeSettled(unit.civ)) {
-            debug("Host rejected found city: unit %s at (%s, %s)", action.unitId, action.tileX, action.tileY)
+        val unit = worldScreen.gameInfo.civilizations.firstOrNull { it.civName == action.civName }
+            ?.units?.getUnitById(action.unitId)
+        if (unit == null) {
+            debug("Host rejected found city: unit %s not found", action.unitId)
+            return
+        }
+        val tile = unit.currentTile
+        if (tile.isCityCenter()) return // already settled
+        if (!unit.hasMovement() || !tile.canBeSettled(unit.civ)) {
+            debug("Host rejected found city: unit %s at (%s, %s) cannot settle",
+                action.unitId, tile.position.x, tile.position.y)
             return
         }
         // Apply on authoritative state
@@ -530,9 +535,37 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
         ChatWebSocket.requestMessageSend(
             com.unciv.logic.multiplayer.chat.Message.GameActionRelay(validatedEnvelope)
         )
-        Gdx.app.postRunnable {
-            worldScreen.shouldUpdate = true
+        Gdx.app.postRunnable { worldScreen.shouldUpdate = true }
+    }
+
+    // ──────────────────────────────────────
+    //  Buy Tile
+    // ──────────────────────────────────────
+
+    private fun hostValidateBuyTile(envelope: GameActionPacket) {
+        val action = envelope.action as? GameAction.BuyTileAction ?: return
+        val civ = worldScreen.gameInfo.civilizations.firstOrNull { it.civName == action.civName } ?: return
+        val city = civ.cities.firstOrNull { it.id == action.cityId } ?: return
+        val tile = worldScreen.gameInfo.tileMap[action.tileX, action.tileY] ?: return
+        if (!city.expansion.canBuyTile(tile)) {
+            debug("Host rejected buy tile: tile (%s,%s) for city %s", action.tileX, action.tileY, action.cityId)
+            return
         }
+        // Apply on authoritative state — host never receives the validated echo
+        applyRemoteBuyTile(action)
+        val validatedEnvelope = envelope.copy(validated = true)
+        ChatWebSocket.requestMessageSend(
+            com.unciv.logic.multiplayer.chat.Message.GameActionRelay(validatedEnvelope)
+        )
+        Gdx.app.postRunnable { worldScreen.shouldUpdate = true }
+    }
+
+    private fun applyRemoteBuyTile(action: GameAction.BuyTileAction) {
+        val civ = worldScreen.gameInfo.civilizations.firstOrNull { it.civName == action.civName } ?: return
+        val city = civ.cities.firstOrNull { it.id == action.cityId } ?: return
+        val tile = worldScreen.gameInfo.tileMap[action.tileX, action.tileY] ?: return
+        city.expansion.buyTile(tile)
+        Gdx.app.postRunnable { worldScreen.shouldUpdate = true }
     }
 
     // ──────────────────────────────────────
@@ -546,9 +579,7 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
         if (diplomacyManager.canDeclareWar()) {
             diplomacyManager.declareWar()
         }
-        Gdx.app.postRunnable {
-            worldScreen.shouldUpdate = true
-        }
+        Gdx.app.postRunnable { worldScreen.shouldUpdate = true }
     }
 
     private fun hostValidateDeclareWar(envelope: GameActionPacket) {
@@ -565,9 +596,7 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
         ChatWebSocket.requestMessageSend(
             com.unciv.logic.multiplayer.chat.Message.GameActionRelay(validatedEnvelope)
         )
-        Gdx.app.postRunnable {
-            worldScreen.shouldUpdate = true
-        }
+        Gdx.app.postRunnable { worldScreen.shouldUpdate = true }
     }
 
     // ──────────────────────────────────────
@@ -576,43 +605,36 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
 
     private fun applyRemoteAttack(action: GameAction.AttackAction) {
         val tileMap = worldScreen.gameInfo.tileMap
-        val targetTile = tileMap[action.targetTileX, action.targetTileY]
-        val unit = targetTile.getUnits().firstOrNull { it.id == action.unitId }
-            // Unit might have moved from another tile
-            ?: tileMap.values.asSequence().flatMap { it.getUnits().asSequence() }
-                .firstOrNull { it.id == action.unitId && it.civ.civName == action.civName }
-            ?: return
-        if (!unit.canAttack()) return  // already attacked (idempotency for host echo)
+        val civ = worldScreen.gameInfo.civilizations.firstOrNull { it.civName == action.civName }
+        val unit = civ?.units?.getUnitById(action.unitId) ?: return
+        if (!unit.canAttack()) return // already attacked (idempotency for host echo)
 
         val attackableTile = TargetHelper
             .getAttackableEnemies(unit, unit.movement.getDistanceToTiles())
-            .firstOrNull { it.tileToAttack == targetTile } ?: return
+            .firstOrNull { it.tileToAttack == tileMap[action.targetTileX, action.targetTileY] } ?: return
         val attacker = MapUnitCombatant(unit)
         if (!Battle.movePreparingAttack(attacker, attackableTile)) return
-        val defender = attackableTile.combatant
         val (damageToDefender, damageToAttacker) = Battle.attackOrNuke(attacker, attackableTile)
-        if (defender != null) {
-            worldScreen.battleAnimationDeferred(attacker, damageToAttacker, defender, damageToDefender)
-        }
-        Gdx.app.postRunnable {
-            worldScreen.shouldUpdate = true
-        }
+
+        val defender = attackableTile.combatant // Must check for null since [worldScreen.battleAnimationDeferred] expect ICombatant, not ICombatant?
+        if (defender != null) worldScreen.battleAnimationDeferred(attacker, damageToAttacker, defender, damageToDefender) // Animation call for cosmetic
+
+        Gdx.app.postRunnable { worldScreen.shouldUpdate = true }
     }
 
     private fun hostValidateAttack(envelope: GameActionPacket) {
         val action = envelope.action as? GameAction.AttackAction ?: return
         val tileMap = worldScreen.gameInfo.tileMap
-        val targetTile = tileMap[action.targetTileX, action.targetTileY]
-        val unit = targetTile.getUnits().firstOrNull { it.id == action.unitId && it.civ.civName == action.civName }
-            ?: tileMap.values.asSequence().flatMap { it.getUnits().asSequence() }
-                .firstOrNull { it.id == action.unitId && it.civ.civName == action.civName }
+
+        // Find the attacking unit
+        val civ = tileMap.gameInfo.civilizations.firstOrNull { it.civName == action.civName }
+        val unit = civ?.units?.getUnitById(action.unitId)
         if (unit == null || !unit.canAttack()) {
-            debug("Host rejected attack: unit %s invalid or cannot attack", action.unitId)
-            return
+            debug("Host rejected attack: unit %s is invalid or cannot attack", action.unitId)
+            return // (idempotent — if already attacked this turn, reject)
         }
-        val attackableTile = TargetHelper
-            .getAttackableEnemies(unit, unit.movement.getDistanceToTiles())
-            .firstOrNull { it.tileToAttack == targetTile }
+        // Verify the defender is actually within range and attackable from the unit's current position
+        val attackableTile = TargetHelper.getAttackableEnemies(unit, unit.movement.getDistanceToTiles()).firstOrNull { it.tileToAttack == tileMap[action.targetTileX, action.targetTileY] }
         if (attackableTile == null) {
             debug("Host rejected attack: no valid target at (%s, %s)", action.targetTileX, action.targetTileY)
             return
@@ -621,14 +643,13 @@ class ActionBroadcastManager(private val worldScreen: WorldScreen) {
         val attacker = MapUnitCombatant(unit)
         if (!Battle.movePreparingAttack(attacker, attackableTile)) return
         Battle.attackOrNuke(attacker, attackableTile)
+
         // Echo validated
         val validatedEnvelope = envelope.copy(validated = true)
         ChatWebSocket.requestMessageSend(
             com.unciv.logic.multiplayer.chat.Message.GameActionRelay(validatedEnvelope)
         )
-        Gdx.app.postRunnable {
-            worldScreen.shouldUpdate = true
-        }
+        Gdx.app.postRunnable { worldScreen.shouldUpdate = true }
     }
 
     // ──────────────────────────────────────

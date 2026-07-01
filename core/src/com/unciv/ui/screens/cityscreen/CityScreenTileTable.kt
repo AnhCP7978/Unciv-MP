@@ -6,6 +6,7 @@ import com.badlogic.gdx.scenes.scene2d.ui.TextButton
 import com.badlogic.gdx.utils.Align
 import com.unciv.logic.map.tile.Tile
 import com.unciv.logic.map.tile.TileDescription
+import com.unciv.logic.multiplayer.SimultaneousModeInterceptor
 import com.unciv.models.stats.Stat
 import com.unciv.models.stats.Stats
 import com.unciv.ui.audio.SoundPlayer
@@ -150,10 +151,18 @@ class CityScreenTileTable(private val cityScreen: CityScreen) : Table() {
             for (tile in getRing(ring)) {
                 if (!city.expansion.canBuyTile(tile))
                     break
+                // Simultaneous multiplayer: route through host-authoritative broadcast
+                val worldScreen = com.unciv.GUI.getWorldScreen()
+                if (worldScreen != null &&
+                    SimultaneousModeInterceptor.interceptBuyTile(
+                        worldScreen, city.id,
+                        tile.position.x, tile.position.y,
+                        city.civ.civName)
+                    ) continue
                 city.expansion.buyTile(tile)
             }
             SoundPlayer.play(Stat.Gold.purchaseSound)
-            cityScreen.game.replaceCurrentScreen(CityScreen(city)) // update doesn't redo the tiles
+            cityScreen.game.replaceCurrentScreen(com.unciv.ui.screens.cityscreen.CityScreen(city))
         }
     }
 }
